@@ -14,6 +14,5 @@ Should you wish to work on an issue, please claim it first by commenting on the 
 - **Add tests** relevant to the fixed bug or new feature.
 
 ## Security
-We value security for the project very highly. We encourage all users to report any vulnerabilities they discover to us. If you find a security vulnerability in the Anuvadini project, please report it responsibly by sending an email to **info@anuvadini.com**.
+Please refer to [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
-At this juncture, we don't have a bug bounty program. We are a small team trying to solve a big problem. We urge you to report any vulnerabilities responsibly so that we can continue building a secure application for the entire community.
