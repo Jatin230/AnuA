@@ -1,0 +1,10 @@
+flutter_launcher_icons:
+  image_path: "C:\Users\jatin\Downloads\97af715ab6a3414a5586695e213784f67e1e0ed5-C4o249Za.png"
+  android: true
+  ios: true
+  windows:
+    generate: true
+    icon_path: "C:\Users\jatin\Downloads\97af715ab6a3414a5586695e213784f67e1e0ed5-C4o249Za.png"
+  macos:
+    generate: true
+    icon_path: "C:\Users\jatin\Downloads\97af715ab6a3414a5586695e213784f67e1e0ed5-C4o249Za.png"

@@ -1,0 +1,48 @@
+    Building arm64-v8a (aarch64-linux-android)
+warning: direct cast of function item into an integer
+  --> libs/hbb_common/src/platform/mod.rs:80:62
+   |
+80 | ...er as _);
+   |       ^^^^
+   |
+   = note: `#[warn(function_casts_as_integer)]` on by default
+help: first cast to a pointer `as *const ()`
+   |
+80 |         libc::signal(libc::SIGSEGV, breakdown_signal_handler as *const () as _);
+   |                                                              ++++++++++++
+
+warning: `hbb_common` (lib) generated 1 warning (run `cargo fix --lib -p hbb_common` to apply 1 suggestion)
+warning: `hbb_common` (lib) generated 1 warning (1 duplicate)
+warning: unused variable: `java_vm`
+   --> libs/scrap/src/android/ffi.rs:217:13
+    |
+217 | ...et java_vm = ...
+    |       ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_java_vm`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `env`
+   --> libs/scrap/src/android/ffi.rs:486:15
+    |
+486 | ...Ok(env) =...
+    |       ^^^ help: if this is intentional, prefix it with an underscore: `_env`
+
+warning: unused variable: `java_vm`
+   --> libs/scrap/src/android/ffi.rs:505:17
+    |
+505 | ...et java_vm = ...
+    |       ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_java_vm`
+
+warning: `scrap` (lib) generated 3 warnings (run `cargo fix --lib -p scrap` to apply 3 suggestions)
+   Compiling anuvadini v1.4.6 (/mnt/c/Users/jatin/Downloads/rustdesk)
+warning: use of deprecated function `hbb_common::base64::encode`: Use Engine::encode
+   --> src/hbbs_http/sync.rs:187:52
+    |
+187 | ...4::encode(&r...
+    |       ^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: `anuvadini` (lib) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 5m 31s
+     Copying libraries to /mnt/c/Users/jatin/Downloads/rustdesk/flutter/android/app/src/main/jniLibs

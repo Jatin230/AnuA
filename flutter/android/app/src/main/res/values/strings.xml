@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Anuvadini</string>
+    <string name="accessibility_service_description">Allow other devices to control your phone using virtual touch, when Anuvadini screen sharing is established</string>
+</resources>

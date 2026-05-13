@@ -1,0 +1,282 @@
+    Building armeabi-v7a (armv7-linux-androideabi)
+   Compiling libc v0.2.171
+   Compiling cfg-if v1.0.0
+   Compiling serde_core v1.0.228
+   Compiling serde v1.0.228
+   Compiling memchr v2.7.4
+   Compiling log v0.4.29
+   Compiling once_cell v1.19.0
+   Compiling smallvec v1.15.1
+   Compiling pin-project-lite v0.2.14
+   Compiling lock_api v0.4.12
+   Compiling parking_lot_core v0.9.10
+   Compiling scopeguard v1.2.0
+   Compiling getrandom v0.2.15
+   Compiling futures-core v0.3.31
+   Compiling typenum v1.17.0
+   Compiling mio v1.0.3
+   Compiling signal-hook-registry v1.4.2
+   Compiling socket2 v0.5.10
+   Compiling generic-array v0.14.7
+   Compiling parking_lot v0.12.3
+   Compiling subtle v2.6.1
+   Compiling futures-sink v0.3.31
+   Compiling slab v0.4.9
+   Compiling thiserror v1.0.61
+   Compiling futures-channel v0.3.31
+   Compiling pin-utils v0.1.0
+   Compiling futures-task v0.3.31
+   Compiling futures-io v0.3.31
+   Compiling futures-util v0.3.31
+   Compiling crossbeam-utils v0.8.20
+   Compiling itoa v1.0.11
+   Compiling bitflags v2.9.1
+   Compiling fnv v1.0.7
+   Compiling rustls-pki-types v1.11.0
+   Compiling num-traits v0.2.19
+   Compiling openssl-sys v0.9.113
+   Compiling ring v0.17.14
+   Compiling bytes v1.10.1
+   Compiling ppv-lite86 v0.2.17
+   Compiling rand_core v0.6.4
+   Compiling getrandom v0.3.2
+   Compiling tokio v1.44.2
+   Compiling http v1.3.1
+   Compiling byteorder v1.5.0
+   Compiling untrusted v0.9.0
+   Compiling httparse v1.10.1
+   Compiling zstd-sys v2.0.11+zstd.1.5.6
+   Compiling anyhow v1.0.98
+   Compiling aho-corasick v1.1.3
+   Compiling regex-syntax v0.8.5
+   Compiling dasp_sample v0.11.0
+   Compiling percent-encoding v2.3.1
+   Compiling foreign-types-shared v0.1.1
+   Compiling foreign-types v0.3.2
+   Compiling regex-automata v0.4.9
+   Compiling jni-sys v0.3.0
+   Compiling zeroize v1.8.1
+   Compiling lazy_static v1.5.0
+   Compiling tracing-core v0.1.34
+   Compiling rustls v0.23.28
+   Compiling regex v1.11.1
+   Compiling openssl-probe v0.2.1
+   Compiling tinyvec_macros v0.1.1
+   Compiling tinyvec v1.6.1
+   Compiling dasp_frame v0.11.0
+   Compiling rustls-webpki v0.103.3
+   Compiling http-body v1.0.1
+   Compiling combine v4.6.7
+   Compiling rand_chacha v0.3.1
+   Compiling thiserror v2.0.17
+   Compiling android_system_properties v0.1.5
+   Compiling hashbrown v0.14.5
+   Compiling utf8parse v0.2.2
+   Compiling adler2 v2.0.1
+   Compiling simd-adler32 v0.3.7
+   Compiling openssl-probe v0.1.5
+   Compiling crypto-common v0.1.6
+   Compiling block-buffer v0.10.4
+   Compiling cesu8 v1.1.0
+   Compiling digest v0.10.7
+   Compiling rustls-native-certs v0.8.1
+   Compiling miniz_oxide v0.8.9
+   Compiling anstyle-parse v0.2.4
+   Compiling sha1 v0.10.6
+   Compiling iana-time-zone v0.1.60
+   Compiling jni v0.21.1
+   Compiling rand v0.8.5
+   Compiling unicode-normalization v0.1.23
+   Compiling form_urlencoded v1.2.1
+   Compiling rand_core v0.9.3
+   Compiling crossbeam-epoch v0.9.18
+   Compiling crc32fast v1.4.2
+   Compiling unicode-bidi v0.3.15
+   Compiling try-lock v0.2.5
+   Compiling tower-service v0.3.3
+   Compiling anstyle-query v1.1.0
+   Compiling anstyle v1.0.13
+   Compiling colorchoice v1.0.1
+   Compiling is_terminal_polyfill v1.70.0
+   Compiling base64 v0.22.1
+   Compiling android-tzdata v0.1.1
+   Compiling chrono v0.4.41
+   Compiling anstream v0.6.14
+   Compiling idna v0.5.0
+   Compiling crossbeam-deque v0.8.5
+   Compiling want v0.3.1
+   Compiling flate2 v1.1.9
+   Compiling tracing v0.1.41
+   Compiling rand_chacha v0.9.0
+   Compiling tokio-rustls v0.26.0
+   Compiling hmac v0.12.1
+   Compiling sha2 v0.10.8
+   Compiling tokio-util v0.7.15
+   Compiling rayon-core v1.12.1
+   Compiling dirs-sys-next v0.1.2
+   Compiling dasp_ring_buffer v0.11.0
+   Compiling ryu v1.0.18
+   Compiling equivalent v1.0.1
+   Compiling either v1.13.0
+   Compiling atomic-waker v1.1.2
+   Compiling indexmap v2.2.6
+   Compiling hyper v1.7.0
+   Compiling trackable v1.3.0
+   Compiling rand v0.9.2
+   Compiling url v2.5.2
+   Compiling serde_json v1.0.118
+   Compiling futures-executor v0.3.30
+   Compiling uuid v1.16.0
+   Compiling libsodium-sys v0.2.7
+   Compiling webpki-roots v0.26.9
+   Compiling toml_datetime v0.6.3
+   Compiling webpki-roots v1.0.4
+   Compiling serde_spanned v0.6.6
+   Compiling data-encoding v2.9.0
+   Compiling utf-8 v0.7.6
+   Compiling ipnet v2.11.0
+   Compiling winnow v0.5.40
+   Compiling adler v1.0.2
+   Compiling gimli v0.29.0
+   Compiling ndk-context v0.1.1
+   Compiling signature v1.6.4
+   Compiling ed25519 v1.5.3
+   Compiling miniz_oxide v0.7.4
+   Compiling hyper-util v0.1.17
+   Compiling bzip2-sys v0.1.11+1.0.8
+   Compiling webm-sys v1.0.4 (https://github.com/rustdesk-org/rust-webm#d2c4d3ac)
+   Compiling addr2line v0.22.0
+   Compiling toml_edit v0.19.15
+   Compiling oboe-sys v0.6.1
+   Compiling zstd-safe v7.1.0
+   Compiling zstd-safe v5.0.2+zstd.1.5.2
+   Compiling futures v0.3.30
+   Compiling netlink-packet-utils v0.5.2
+   Compiling num_enum v0.7.2
+   Compiling rayon v1.10.0
+   Compiling trackable v0.2.24
+   Compiling dasp_rms v0.11.0
+   Compiling directories-next v2.0.0
+   Compiling inout v0.1.3
+   Compiling dasp_peak v0.11.0
+   Compiling env_filter v0.1.3
+   Compiling ndk-sys v0.5.0+25.2.9519653
+   Compiling backtrace v0.3.73
+   Compiling pin-project v1.1.5
+   Compiling toml v0.5.11
+   Compiling crossbeam-channel v0.5.13
+   Compiling crossbeam-queue v0.3.11
+   Compiling protobuf v3.7.2
+   Compiling protobuf-support v3.7.2
+   Compiling sync_wrapper v1.0.2
+   Compiling is-terminal v0.4.16
+   Compiling num_cpus v1.16.0
+   Compiling object v0.36.1
+   Compiling overload v0.1.1
+   Compiling glob v0.3.1
+   Compiling tower-layer v0.3.3
+   Compiling rustc-demangle v0.1.24
+   Compiling nu-ansi-term v0.49.0
+   Compiling powerfmt v0.2.0
+   Compiling compression-core v0.4.29
+   Compiling rustls-platform-verifier-android v0.1.1
+   Compiling crc-catalog v2.4.0
+   Compiling base64ct v1.6.0
+   Compiling humantime v2.1.0
+warning: direct cast of function item into an integer
+  --> libs/hbb_common/src/platform/mod.rs:80:62
+   |
+80 | ...er as _);
+   |       ^^^^
+   |
+   = note: `#[warn(function_casts_as_integer)]` on by default
+help: first cast to a pointer `as *const ()`
+   |
+80 |         libc::signal(libc::SIGSEGV, breakdown_signal_handler as *const () as _);
+   |                                                              ++++++++++++
+
+warning: `hbb_common` (lib) generated 1 warning (run `cargo fix --lib -p hbb_common` to apply 1 suggestion)
+   Compiling crc v3.3.0
+   Compiling password-hash v0.4.2
+   Compiling env_logger v0.11.6
+   Compiling rustls-platform-verifier v0.6.2
+   Compiling compression-codecs v0.4.31
+   Compiling deranged v0.3.11
+   Compiling flexi_logger v0.27.4
+   Compiling tower v0.5.2
+   Compiling winapi v0.3.9
+   Compiling libm v0.2.8
+   Compiling confy v0.4.0-2 (https://github.com/rustdesk-org/confy#83db9ec1)
+   Compiling nu-ansi-term v0.46.0
+   Compiling dart-sys v4.1.5
+   Compiling ndk v0.8.0
+   Compiling tokio-socks v0.5.2-3 (https://github.com/rustdesk-org/tokio-socks#bdb9aa3d)
+   Compiling sysinfo v0.29.10 (https://github.com/rustdesk-org/sysinfo?branch=rlim_max#90b1705d)
+   Compiling dasp_envelope v0.11.0
+   Compiling cipher v0.4.4
+   Compiling bytecodec v0.4.15
+   Compiling netlink-packet-core v0.5.0
+   Compiling zstd v0.13.1
+   Compiling toml v0.7.8
+   Compiling dasp_interpolate v0.11.0
+   Compiling dirs-next v2.0.0
+   Compiling http-body-util v0.1.3
+   Compiling dlopen v0.1.8
+   Compiling hbb_common v0.1.0 (/mnt/c/Users/jatin/Downloads/rustdesk/libs/hbb_common)
+   Compiling env_logger v0.10.2
+   Compiling tracing-log v0.2.0
+   Compiling sharded-slab v0.1.7
+   Compiling dasp_window v0.11.1
+   Compiling num-integer v0.1.46
+   Compiling socket2 v0.3.19
+   Compiling filetime v0.2.23
+   Compiling thread_local v1.1.8
+   Compiling libloading v0.8.4
+   Compiling iri-string v0.7.8
+   Compiling num-conv v0.1.0
+   Compiling clap_lex v0.7.6
+   Compiling md5 v0.7.0
+   Compiling time-core v0.1.2
+   Compiling atomic v0.5.3
+   Compiling android_log-sys v0.3.1
+   Compiling strsim v0.11.1
+   Compiling whoami v1.6.0
+   Compiling bitflags v1.3.2
+   Compiling netlink-packet-route v0.15.0
+   Compiling clap_builder v4.5.53
+   Compiling cpal v0.15.3 (https://github.com/rustdesk-org/cpal?branch=osx-screencapturekit#6b374bca)
+   Compiling allo-isolate v0.1.25
+   Compiling tower-http v0.6.6
+   Compiling android_logger v0.13.3
+   Compiling time v0.3.36
+   Compiling stun_codec v0.3.5
+   Compiling enum-map v2.7.3
+   Compiling zerocopy v0.7.34
+   Compiling tracing-subscriber v0.3.19
+   Compiling num-bigint v0.4.6
+   Compiling dlopen2 v0.4.1
+   Compiling dasp_signal v0.11.0
+   Compiling magnum-opus v0.4.0 (https://github.com/rustdesk-org/magnum-opus#5cd2bf98)
+error: failed to run custom build command for `magnum-opus v0.4.0 (https://github.com/rustdesk-org/magnum-opus#5cd2bf98)`
+
+Caused by:
+  process didn't exit successfully: `/mnt/c/Users/jatin/Downloads/rustdesk/target/release/build/magnum-opus-55bb0691f9d40e93/build-script-build` (exit status: 101)
+  --- stdout
+  cargo:info=arm-android
+  cargo:rustc-link-lib=static=opus
+  cargo:rustc-link-search=/home/jatin/vcpkg/installed/arm-android/lib
+  cargo:include=/home/jatin/vcpkg/installed/arm-android/include
+  rerun-if-changed=/home/jatin/.cargo/git/checkouts/magnum-opus-dcec9e0860829263/5cd2bf9/opus_ffi.h
+  rerun-if-changed=/home/jatin/vcpkg/installed/arm-android/include
+
+  --- stderr
+  /home/jatin/.cargo/git/checkouts/magnum-opus-dcec9e0860829263/5cd2bf9/opus_ffi.h:1:10: fatal error: 'opus/opus_multistream.h' file not found
+  /home/jatin/.cargo/git/checkouts/magnum-opus-dcec9e0860829263/5cd2bf9/opus_ffi.h:1:10: fatal error: 'opus/opus_multistream.h' file not found, err: true
+
+  thread 'main' (3308) panicked at /home/jatin/.cargo/git/checkouts/magnum-opus-dcec9e0860829263/5cd2bf9/build.rs:146:18:
+  called `Result::unwrap()` on an `Err` value: ()
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+warning: build failed, waiting for other jobs to finish...
+note: If the build failed due to a missing target, you can run this command:
+note: 
+note:     rustup target install armv7-linux-androideabi

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo run:*)",
+      "Bash(set \"VCPKG_ROOT=C:\\\\Users\\\\jatin\\\\Downloads\\\\rustdesk\\\\vcpkg_fake_root\")",
+      "Bash(set \"LIBCLANG_PATH=C:\\\\Program Files\\\\LLVM\\\\bin\")",
+      "Bash(set \"PATH=C:\\\\Program Files\\\\LLVM\\\\bin;%PATH%\")",
+      "Bash(./run_native_app.bat)"
+    ]
+  }
+}
