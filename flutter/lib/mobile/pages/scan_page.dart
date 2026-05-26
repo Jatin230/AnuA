@@ -71,6 +71,7 @@ class _ScanPageState extends State<ScanPage> {
     });
     scanSubscription = controller.scannedDataStream.listen((scanData) {
       if (scanData.code != null) {
+        controller.pauseCamera();
         showServerSettingFromQr(scanData.code!);
       }
     });
@@ -149,10 +150,26 @@ class _ScanPageState extends State<ScanPage> {
   void showServerSettingFromQr(String data) async {
     closeConnection();
     await controller?.pauseCamera();
-    // Handle direct local IP connection (new format)
+    // Handle direct local IP connection (laptop QR code)
     if (data.startsWith('anuvadini://')) {
       final address = data.substring('anuvadini://'.length).trim();
-      connect(context, address);
+      if (address.startsWith('direct-tcp:')) {
+        // Laptop registration QR — register this phone with the laptop
+        final hostPart = address.substring('direct-tcp:'.length);
+        // Expected format: <ip>_port_<port>
+        final match = RegExp(r'^(.+)_port_(\d+)$').firstMatch(hostPart);
+        if (match != null) {
+          final ip = match.group(1)!;
+          final port = int.parse(match.group(2)!);
+          await _registerWithLaptop(context, ip, port);
+        } else {
+          showToast('Invalid QR code format');
+          controller?.resumeCamera();
+        }
+      } else {
+        // Other anuvadini:// deep links (tunnel, etc.) — normal connect
+        connect(context, address);
+      }
       return;
     }
     // Handle localtunnel format (legacy)
@@ -171,6 +188,61 @@ class _ScanPageState extends State<ScanPage> {
       });
     } catch (e) {
       showToast('Invalid QR code');
+    }
+  }
+
+  /// Opens a plain TCP connection to the laptop, sends `ANUVADINI_HELLO`, and
+  /// waits for `ANUVADINI_ACK`.  No RustDesk crypto handshake is involved.
+  Future<void> _registerWithLaptop(
+      BuildContext ctx, String ip, int port) async {
+    showToast('Connecting to laptop at $ip:$port...');
+    try {
+      final socket =
+          await Socket.connect(ip, port, timeout: const Duration(seconds: 6));
+
+      // Build device identity: name + device-local IP
+      final deviceName = Platform.isAndroid
+          ? 'Android Phone'
+          : Platform.isIOS
+              ? 'iPhone'
+              : 'Mobile';
+      final interfaces = await NetworkInterface.list(
+          type: InternetAddressType.IPv4, includeLoopback: false);
+      String myIp = ip; // fallback: use the laptop-facing IP
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback) {
+            myIp = addr.address;
+            break;
+          }
+        }
+        break;
+      }
+
+      // Send registration message
+      socket.write('ANUVADINI_HELLO:$deviceName:$myIp\n');
+      await socket.flush();
+
+      // Wait for acknowledgment (up to 4 s)
+      String response = '';
+      try {
+        await for (final chunk
+            in socket.timeout(const Duration(seconds: 4))) {
+          response += String.fromCharCodes(chunk);
+          if (response.contains('ANUVADINI_ACK')) break;
+        }
+      } catch (_) {}
+
+      await socket.close();
+
+      if (response.contains('ANUVADINI_ACK')) {
+        showToast('Registered with laptop successfully!');
+      } else {
+        showToast('Connected to laptop (no ACK received)');
+      }
+    } catch (e) {
+      showToast('Failed to connect: $e');
+      controller?.resumeCamera();
     }
   }
 }

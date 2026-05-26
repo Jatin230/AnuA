@@ -1,0 +1,25 @@
+{
+  "name": "rustdesk",
+  "version": "1.0.0",
+  "description": "Anuvadini is a highly customized, self-hosted remote desktop application derived from the RustDesk codebase. It features a completely rebuilt local networking protocol that bypasses the need for internet-based Rendezvous servers and public relays, allowing for direct P2P connections on local networks (via the custom `direct-tcp:` protocol) without being subject to public server login requirements.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jatin230/AnuD.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Jatin230/AnuD/issues"
+  },
+  "homepage": "https://github.com/Jatin230/AnuD#readme"
+}

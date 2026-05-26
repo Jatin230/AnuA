@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:auto_size_text_field/auto_size_text_field.dart';
 import 'package:flutter/material.dart';
@@ -52,6 +53,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
   // https://github.com/flutter/flutter/issues/157244
   Iterable<Peer> _autocompleteOpts = [];
 
+  String _localIP = "";
+  String _oneTimePassword = "";
+
   _ConnectionPageState() {
     if (!isWeb) _uniLinksSubscription = listenUniLinks();
     _idController.addListener(() {
@@ -76,6 +80,57 @@ class _ConnectionPageState extends State<ConnectionPage> {
       });
     }
     Get.put<TextEditingController>(_idEditingController);
+    _detectLocalIP();
+  }
+
+  Future<void> _detectLocalIP() async {
+    _localIP = bind.mainGetOptionSync(key: 'local-ip-addr');
+    if (_localIP.isEmpty) {
+      try {
+        final interfaces = await NetworkInterface.list(includeLoopback: false, type: InternetAddressType.IPv4);
+        for (var interface in interfaces) {
+          for (var addr in interface.addresses) {
+            if (!addr.isLoopback && addr.address.isNotEmpty) {
+              _localIP = addr.address;
+              await bind.mainSetOption(key: 'local-ip-addr', value: _localIP);
+              break;
+            }
+          }
+          if (_localIP.isNotEmpty) break;
+        }
+      } catch (_) {}
+    }
+    _oneTimePassword = bind.mainGetOptionSync(key: 'one-time-password');
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildDirectConnectionInfo() {
+    if (_localIP.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: MyTheme.accent.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: MyTheme.accent.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("Direct Connection IP",
+              style: TextStyle(fontSize: 11, color: Colors.grey[600], fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          SelectableText(_localIP,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1)),
+          if (_oneTimePassword.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text("One Time Password: $_oneTimePassword",
+                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          ],
+        ],
+      ),
+    );
   }
 
   @override
@@ -87,6 +142,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
             delegate: SliverChildListDelegate([
           if (!bind.isCustomClient() && !isIOS)
             Obx(() => _buildUpdateUI(stateGlobal.updateUrl.value)),
+          _buildDirectConnectionInfo(),
           _buildRemoteIDTextField(),
         ])),
         SliverFillRemaining(

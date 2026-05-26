@@ -367,7 +367,20 @@ class FloatingWindowService : Service(), View.OnTouchListener {
     private val handler = Handler(Looper.getMainLooper())
     private val runnable = object : Runnable {
         override fun run() {
-            if (updateKeepScreenOnLayoutParams()) {
+            var updated = updateKeepScreenOnLayoutParams()
+            
+            // Workaround for Android black screen when display is static:
+            // Slightly toggle the alpha to force SurfaceFlinger/MediaProjection to produce a frame
+            if (MainService.isStart && viewCreated) {
+                if (floatingView.alpha == viewTransparency) {
+                    floatingView.alpha = if (viewTransparency > 0.01f) viewTransparency - 0.01f else 0.01f
+                } else {
+                    floatingView.alpha = viewTransparency
+                }
+                updated = true
+            }
+            
+            if (updated) {
                 windowManager.updateViewLayout(floatingView, layoutParams)
             }
             handler.postDelayed(this, 1000) // 1000 milliseconds = 1 second

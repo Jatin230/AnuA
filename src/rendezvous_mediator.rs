@@ -25,6 +25,7 @@ use hbb_common::{
     udp::FramedSocket,
     AddrMangle, IntoTargetAddr, ResultType, Stream, TargetAddr,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
     check_port,
@@ -58,6 +59,7 @@ impl RendezvousMediator {
     }
 
     pub async fn start_all() {
+        crate::common::set_local_ip();
         crate::test_nat_type();
         if config::is_outgoing_only() {
             loop {
@@ -790,13 +792,14 @@ async fn direct_server(server: ServerPtr) {
             match hbb_common::tcp::listen_any(port as _).await {
                 Ok(l) => {
                     listener = Some(l);
-                    log::info!(
-                        "Direct server listening on: {:?}",
-                        listener.as_ref().map(|l| l.local_addr())
-                    );
+                    let event = serde_json::json!({
+                        "name": "direct_server_status",
+                        "data": "started"
+                    }).to_string();
+                    #[cfg(feature = "flutter")]
+                    crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
                 }
                 Err(err) => {
-                    // to-do: pass to ui
                     log::error!(
                         "Failed to start direct server on port: {}, error: {}",
                         port,
@@ -825,16 +828,33 @@ async fn direct_server(server: ServerPtr) {
                     .unwrap_or(Config::get_any_listen_addr(true));
                 let server = server.clone();
                 tokio::spawn(async move {
-                    allow_err!(
-                        crate::server::create_tcp_connection(
-                            server,
-                            hbb_common::Stream::from(stream, local_addr),
-                            addr,
-                            false,
-                            None, // Direct connections don't have control_permissions
-                        )
-                        .await
+                    // Peek at the first bytes to detect ANUVADINI_HELLO registration
+                    let mut peek_buf = [0u8; 32];
+                    let n = match hbb_common::timeout(3000, async {
+                        stream.peek(&mut peek_buf).await
+                    }).await {
+                        Ok(Ok(n)) => n,
+                        _ => 0,
+                    };
+                    log::info!(
+                        "Direct Server Peeked: {} bytes, content: {:?}",
+                        n,
+                        std::str::from_utf8(&peek_buf[..n]).unwrap_or("?")
                     );
+                    if n >= 15 && &peek_buf[..15] == b"ANUVADINI_HELLO" {
+                        handle_mobile_registration(stream, addr).await;
+                    } else {
+                        allow_err!(
+                            crate::server::create_tcp_connection(
+                                server,
+                                hbb_common::Stream::from(stream, local_addr),
+                                addr,
+                                false,
+                                None,
+                            )
+                            .await
+                        );
+                    }
                 });
             } else {
                 sleep(0.1).await;
@@ -843,6 +863,53 @@ async fn direct_server(server: ServerPtr) {
             sleep(1.).await;
         }
     }
+}
+
+/// Handle a mobile device registration handshake.
+/// Protocol: phone → laptop: `ANUVADINI_HELLO:<device_name>:<device_id>\n`
+///           laptop → phone: `ANUVADINI_ACK\n`
+async fn handle_mobile_registration(mut stream: tokio::net::TcpStream, addr: SocketAddr) {
+    let mut buf = vec![0u8; 256];
+    let n = match hbb_common::timeout(3000, stream.read(&mut buf)).await {
+        Ok(Ok(n)) if n > 0 => n,
+        _ => {
+            log::warn!("handle_mobile_registration: failed to read from {}", addr);
+            return;
+        }
+    };
+
+    let msg = String::from_utf8_lossy(&buf[..n]);
+    let msg = msg.trim();
+    log::info!("Match! Processing ANUVADINI_HELLO registration...");
+
+    // Format: ANUVADINI_HELLO:<name>:<id>
+    // The device_id field is optional; fall back to the peer IP.
+    let parts: Vec<&str> = msg.splitn(3, ':').collect();
+    let name = parts.get(1).copied().unwrap_or("Unknown Device");
+    let id   = parts.get(2).copied().unwrap_or_else(|| "unknown");
+    let ip   = addr.ip().to_string().replace("::ffff:", "");
+
+    log::info!("Registered device — name: {}, id: {}, ip: {}", name, id, ip);
+
+    // Build the JSON payload that the Flutter event handler expects
+    let device_json = serde_json::json!({
+        "name": name,
+        "id":   id,
+        "ip":   ip,
+    }).to_string();
+
+    let event = serde_json::json!({
+        "name": "mobile_device_registered",
+        "data": device_json,
+    }).to_string();
+
+    log::info!("Event pushed to Flutter: mobile_device_registered, {}", addr);
+    #[cfg(feature = "flutter")]
+    crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
+
+    // Acknowledge the phone so it knows registration succeeded
+    let _ = hbb_common::timeout(2000, stream.write_all(b"ANUVADINI_ACK\n")).await;
+    let _ = stream.flush().await;
 }
 
 enum Sink<'a> {

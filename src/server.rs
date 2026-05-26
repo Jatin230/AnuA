@@ -224,6 +224,7 @@ pub async fn create_tcp_connection(
                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
                     if let Some(message::Union::PublicKey(pk)) = msg_in.union {
                         if pk.asymmetric_value.len() == box_::PUBLICKEYBYTES {
+                            log::info!("Handshake successful, encryption enabled for {}", addr);
                             stream.set_key(tcp::Encrypt::decode(
                                 &pk.symmetric_value,
                                 &pk.asymmetric_value,

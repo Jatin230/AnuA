@@ -735,6 +735,30 @@ pub async fn get_nat_type(ms_timeout: u64) -> i32 {
     crate::ipc::get_nat_type(ms_timeout).await
 }
 
+pub fn set_local_ip() {
+    if Config::get_option("local-ip-addr").is_empty() {
+        if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            if socket.connect("1.1.1.1:53").is_ok() {
+                if let Ok(local_addr) = socket.local_addr() {
+                    Config::set_option("local-ip-addr".to_owned(), local_addr.ip().to_string());
+                }
+            }
+        }
+    }
+
+    if Config::get_option("direct-server") != "Y" {
+        Config::set_option("direct-server".to_owned(), "Y".to_owned());
+    }
+
+    if Config::get_option("one-time-password").is_empty() {
+        use hbb_common::rand::Rng;
+        let mut rng = hbb_common::rand::thread_rng();
+        let password = format!("{:06}", rng.gen_range(100000..999999));
+        Config::set_option("one-time-password".to_owned(), password.clone());
+        Config::set_option("custom-password".to_owned(), password);
+    }
+}
+
 // used for client to test which server is faster in case stop-servic=Y
 #[tokio::main(flavor = "current_thread")]
 async fn test_rendezvous_server_() {

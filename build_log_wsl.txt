@@ -1,0 +1,42 @@
+    Building arm64-v8a (aarch64-linux-android)
+warning: unused variable: `java_vm`
+   --> libs/scrap/src/android/ffi.rs:224:13
+    |
+224 |         let java_vm = jvm.get_java_vm_pointer() as *mut c_void;
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_java_vm`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `env`
+   --> libs/scrap/src/android/ffi.rs:493:15
+    |
+493 |     if let Ok(env) = vm.get_env() {
+    |               ^^^ help: if this is intentional, prefix it with an underscore: `_env`
+
+warning: unused variable: `java_vm`
+   --> libs/scrap/src/android/ffi.rs:512:17
+    |
+512 |             let java_vm = jvm.get_java_vm_pointer() as *mut c_void;
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_java_vm`
+
+warning: `scrap` (lib) generated 3 warnings
+   Compiling anuvadini v1.3.0 (/mnt/c/Users/jatin/Downloads/rustdesk)
+warning: use of deprecated function `hbb_common::base64::encode`: Use Engine::encode
+   --> src/hbbs_http/sync.rs:187:52
+    |
+187 |                         hash = hbb_common::base64::encode(&res[..]);
+    |                                                    ^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: `anuvadini` (lib) generated 1 warning
+warning: unused import: `anuvadini::*`
+ --> src/service.rs:1:5
+  |
+1 | use anuvadini::*;
+  |     ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: `anuvadini` (bin "service") generated 1 warning (run `cargo fix --bin "service"` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 3m 32s

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -220,6 +221,23 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
       if (_isUsingPublicServer != isUsingPublicServer) {
         update = true;
         _isUsingPublicServer = isUsingPublicServer;
+      }
+
+      if (_localIP.isEmpty) {
+        try {
+          final interfaces = await NetworkInterface.list(includeLoopback: false, type: InternetAddressType.IPv4);
+          for (var interface in interfaces) {
+            for (var addr in interface.addresses) {
+              if (!addr.isLoopback && addr.address.isNotEmpty) {
+                _localIP = addr.address;
+                await bind.mainSetOption(key: 'local-ip-addr', value: _localIP);
+                update = true;
+                break;
+              }
+            }
+            if (_localIP.isNotEmpty) break;
+          }
+        } catch (_) {}
       }
 
       if (update) {
