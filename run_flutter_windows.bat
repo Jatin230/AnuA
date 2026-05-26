@@ -2,7 +2,7 @@
 setlocal
 
 set "REPO_ROOT=%~dp0"
-set "APP_EXE=%REPO_ROOT%flutter\build\windows\x64\runner\Release\rustdesk.exe"
+set "APP_EXE=%REPO_ROOT%flutter\build\windows\x64\runner\Release\anuvadini.exe"
 
 if not exist "%APP_EXE%" (
   echo Flutter build output not found.

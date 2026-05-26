@@ -491,8 +491,8 @@ pub struct VersionCheckResponse {
     pub url: String,
 }
 
-pub const VER_TYPE_ANUVADINI_CLIENT: &str = "rustdesk-client";
-pub const VER_TYPE_ANUVADINI_SERVER: &str = "rustdesk-server";
+pub const VER_TYPE_ANUVADINI_CLIENT: &str = "anuvadini-client";
+pub const VER_TYPE_ANUVADINI_SERVER: &str = "anuvadini-server";
 
 pub fn version_check_request(typ: String) -> (VersionCheckRequest, String) {
     const URL: &str = "https://api.anuvadini.com/version/latest";

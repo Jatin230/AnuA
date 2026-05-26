@@ -34,7 +34,7 @@ warning: unused variable: `java_vm`
     |       ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_java_vm`
 
 warning: `scrap` (lib) generated 3 warnings (run `cargo fix --lib -p scrap` to apply 3 suggestions)
-   Compiling anuvadini v1.4.6 (/mnt/c/Users/jatin/Downloads/rustdesk)
+   Compiling anuvadini v1.4.6 (/mnt/c/Users/jatin/Downloads/anuvadini)
 warning: unused imports: `keys` and `option2bool`
   --> src/server/clipboard_service.rs:19:26
    |
@@ -195,7 +195,7 @@ help: the type constructed contains `hbb_common::message_proto::SupportedEncodin
    |            this argument influences the type of `Some`
 note: tuple variant defined here
   --> /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/option.rs:608:4
-   = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13700432316734265754.txt'
+   = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13700432316734265754.txt'
    = note: consider using `--verbose` to print the full type name to the console
 
 error[E0308]: mismatched types
@@ -215,7 +215,7 @@ help: the type constructed contains `hbb_common::message_proto::SupportedEncodin
    |            this argument influences the type of `Some`
 note: tuple variant defined here
   --> /rustc/59807616e1fa2540724bfbac14d7976d7e4a3860/library/core/src/option.rs:608:4
-   = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13700432316734265754.txt'
+   = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13700432316734265754.txt'
    = note: consider using `--verbose` to print the full type name to the console
 
 error[E0624]: method `on_remote_authorized` is private
@@ -258,7 +258,7 @@ note: required by a bound in `hbb_common::tokio::spawn`
 167 | ...e
 168 | ...F: Future + Send + ...
     |                ^^^^ required by this bound in `spawn`
-    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
+    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
     = note: consider using `--verbose` to print the full type name to the console
 
 error: future cannot be sent between threads safely
@@ -287,7 +287,7 @@ note: required by a bound in `hbb_common::tokio::spawn`
  167 | ...e
  168 | ...F: Future + Send + ...
      |                ^^^^ required by this bound in `spawn`
-     = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
+     = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
      = note: consider using `--verbose` to print the full type name to the console
 
 error: future cannot be sent between threads safely
@@ -319,7 +319,7 @@ note: required by a bound in `hbb_common::tokio::spawn`
 167 | ...e
 168 | ...F: Future + Send + ...
     |                ^^^^ required by this bound in `spawn`
-    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
+    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
     = note: consider using `--verbose` to print the full type name to the console
 
 error: future cannot be sent between threads safely
@@ -348,7 +348,7 @@ note: required by a bound in `hbb_common::tokio::spawn`
  167 | ...e
  168 | ...F: Future + Send + ...
      |                ^^^^ required by this bound in `spawn`
-     = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
+     = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
      = note: consider using `--verbose` to print the full type name to the console
 
 error: future cannot be sent between threads safely
@@ -376,7 +376,7 @@ note: required by a bound in `hbb_common::tokio::spawn`
 167 | ...e
 168 | ...F: Future + Send + ...
     |                ^^^^ required by this bound in `spawn`
-    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
+    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
     = note: consider using `--verbose` to print the full type name to the console
 
 error: future cannot be sent between threads safely
@@ -401,7 +401,7 @@ note: required by a bound in `hbb_common::tokio::spawn`
  167 | ...e
  168 | ...F: Future + Send + ...
      |                ^^^^ required by this bound in `spawn`
-     = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
+     = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-13558712946985005337.txt'
      = note: consider using `--verbose` to print the full type name to the console
 
 warning: value assigned to `adjust_ratio` is never read

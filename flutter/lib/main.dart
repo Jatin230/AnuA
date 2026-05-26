@@ -140,10 +140,10 @@ Future<void> initEnv(String appType) async {
       final relayServer = await bind.mainGetOption(key: 'relay-server');
       final key = await bind.mainGetOption(key: 'key');
 
-      if (idServer == 'router.rustdesk.com') {
+      if (idServer == 'router.anuvadini.com') {
         await bind.mainSetOption(key: 'custom-rendezvous-server', value: '');
       }
-      if (relayServer == 'relay.rustdesk.com') {
+      if (relayServer == 'relay.anuvadini.com') {
         await bind.mainSetOption(key: 'relay-server', value: '');
       }
       if (key == 'OeVuKk5nlHiXp+APNn0Y3pC11Iwpwn44JGqrQCsWqmBw=') {

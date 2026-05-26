@@ -177,17 +177,17 @@ Send this file to your Android phone and install it (see Quick Start above for h
 4. The laptop recognizes the custom handshake, registers the phone, and replies: `ANUVADINI_ACK`.
 5. The phone appears in the "Active Mobile Devices" list. The devices can now establish a remote session.
 
-### Key Technical Modifications from RustDesk Upstream
+### Key Technical Modifications from Anuvadini Upstream
 
 | Area | Change |
 |---|---|
 | `src/rendezvous_mediator.rs` | Added `handle_mobile_registration()` — custom TCP handshake handler |
-| `src/rendezvous_mediator.rs` | Added packet peeking to detect `ANUVADINI_HELLO` vs normal RustDesk traffic |
+| `src/rendezvous_mediator.rs` | Added packet peeking to detect `ANUVADINI_HELLO` vs normal Anuvadini traffic |
 | `src/client.rs` | Added `direct-tcp:` URI scheme support — bypasses rendezvous server lookup |
 | `src/server/connection.rs` | Patched auth to allow `direct-tcp:` prefixed usernames (offline override) |
 | `flutter/lib/desktop/pages/mobile_control_page.dart` | New "Mobile Command Center" UI — QR generation, device list, control buttons |
 | `flutter/lib/mobile/pages/scan_page.dart` | Updated QR scanner to handle `anuvadini://direct-tcp:` URIs |
-| `Cargo.toml` | Rebranded from `rustdesk` → `anuvadini` |
+| `Cargo.toml` | Rebranded from `anuvadini` → `anuvadini` |
 
 ---
 
@@ -247,7 +247,7 @@ AnuC/
 
 ## 📄 License
 
-This project is based on [RustDesk](https://github.com/rustdesk/rustdesk) which is licensed under [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html). All modifications and additions in this repository are also subject to the same AGPL-3.0 license.
+This project is based on [Anuvadini](https://github.com/anuvadini/anuvadini) which is licensed under [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html). All modifications and additions in this repository are also subject to the same AGPL-3.0 license.
 
 ---
 

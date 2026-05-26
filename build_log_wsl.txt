@@ -20,7 +20,7 @@ warning: unused variable: `java_vm`
     |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_java_vm`
 
 warning: `scrap` (lib) generated 3 warnings
-   Compiling anuvadini v1.3.0 (/mnt/c/Users/jatin/Downloads/rustdesk)
+   Compiling anuvadini v1.3.0 (/mnt/c/Users/jatin/Downloads/anuvadini)
 warning: use of deprecated function `hbb_common::base64::encode`: Use Engine::encode
    --> src/hbbs_http/sync.rs:187:52
     |

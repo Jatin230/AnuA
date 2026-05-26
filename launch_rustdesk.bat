@@ -1,3 +1,3 @@
 @echo off
-wsl bash -c "~/rustdesk/run_app.sh"
+wsl bash -c "~/anuvadini/run_app.sh"
 pause

@@ -34,7 +34,7 @@ warning: unused variable: `java_vm`
     |       ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_java_vm`
 
 warning: `scrap` (lib) generated 3 warnings (run `cargo fix --lib -p scrap` to apply 3 suggestions)
-   Compiling anuvadini v1.4.6 (/mnt/c/Users/jatin/Downloads/rustdesk)
+   Compiling anuvadini v1.4.6 (/mnt/c/Users/jatin/Downloads/anuvadini)
 error: this file contains an unclosed delimiter
     --> src/server/connection.rs:5535:3
      |

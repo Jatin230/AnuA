@@ -33,7 +33,7 @@ warning: unused variable: `java_vm`
 505 | ...et java_vm = ...
     |       ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_java_vm`
 
-   Compiling anuvadini v1.4.6 (/mnt/c/Users/jatin/Downloads/rustdesk)
+   Compiling anuvadini v1.4.6 (/mnt/c/Users/jatin/Downloads/anuvadini)
 warning: `scrap` (lib) generated 3 warnings (run `cargo fix --lib -p scrap` to apply 3 suggestions)
 warning: unused imports: `keys` and `option2bool`
   --> src/server/clipboard_service.rs:19:26
@@ -129,7 +129,7 @@ error[E0599]: no method named `use_native_tls` found for struct `ClientBuilder` 
 101 |    ...SyncClient)
     |    ...----------- in this macro invocation
     |
-    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-4860656170414527596.txt'
+    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-4860656170414527596.txt'
     = note: consider using `--verbose` to print the full type name to the console
     = note: this error originates in the macro `configure_http_client` (in Nightly builds, run with -Z macro-backtrace for more info)
 
@@ -142,7 +142,7 @@ error[E0599]: no method named `use_native_tls` found for struct `ClientBuilder` 
 109 |    ...syncClient)
     |    ...----------- in this macro invocation
     |
-    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/deps/libanuvadini.long-type-6941195082707560292.txt'
+    = note: the full name for the type has been written to '/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/deps/libanuvadini.long-type-6941195082707560292.txt'
     = note: consider using `--verbose` to print the full type name to the console
     = note: this error originates in the macro `configure_http_client` (in Nightly builds, run with -Z macro-backtrace for more info)
 

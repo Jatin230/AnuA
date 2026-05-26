@@ -14,7 +14,7 @@ warning: ring@0.17.14: Compiler family detection failed due to error: ToolNotFou
 error: failed to run custom build command for `ring v0.17.14`
 
 Caused by:
-  process didn't exit successfully: `/mnt/c/Users/jatin/Downloads/rustdesk/target/release/build/ring-1184552b4907ec5f/build-script-build` (exit status: 1)
+  process didn't exit successfully: `/mnt/c/Users/jatin/Downloads/anuvadini/target/release/build/ring-1184552b4907ec5f/build-script-build` (exit status: 1)
   --- stdout
   cargo:rerun-if-env-changed=CARGO_MANIFEST_DIR
   cargo:rerun-if-env-changed=CARGO_PKG_NAME
@@ -30,7 +30,7 @@ Caused by:
   cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ENV
   cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ENDIAN
   OPT_LEVEL = Some(3)
-  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/build/ring-a3281ce6f4f4d8ea/out)
+  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/build/ring-a3281ce6f4f4d8ea/out)
   TARGET = Some(aarch64-linux-android)
   HOST = Some(x86_64-unknown-linux-gnu)
   cargo:rerun-if-env-changed=CC_aarch64-linux-android
@@ -72,10 +72,10 @@ warning: zstd-sys@2.0.11+zstd.1.5.6: Compiler family detection failed due to err
 error: failed to run custom build command for `zstd-sys v2.0.11+zstd.1.5.6`
 
 Caused by:
-  process didn't exit successfully: `/mnt/c/Users/jatin/Downloads/rustdesk/target/release/build/zstd-sys-42cd3e3bc40b4ec2/build-script-build` (exit status: 1)
+  process didn't exit successfully: `/mnt/c/Users/jatin/Downloads/anuvadini/target/release/build/zstd-sys-42cd3e3bc40b4ec2/build-script-build` (exit status: 1)
   --- stdout
   cargo:rerun-if-env-changed=ZSTD_SYS_USE_PKG_CONFIG
-  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/build/zstd-sys-7a3f21542eb15a94/out)
+  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/build/zstd-sys-7a3f21542eb15a94/out)
   OPT_LEVEL = Some(3)
   TARGET = Some(aarch64-linux-android)
   HOST = Some(x86_64-unknown-linux-gnu)
@@ -102,7 +102,7 @@ Caused by:
   cargo:rerun-if-env-changed=CFLAGS
   CFLAGS = None
   CARGO_ENCODED_RUSTFLAGS = Some()
-  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/build/zstd-sys-7a3f21542eb15a94/out)
+  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/build/zstd-sys-7a3f21542eb15a94/out)
   cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
   cargo:warning=Compiler family detection failed due to error: ToolNotFound: Failed to find tool. Is `aarch64-linux-android-clang` installed?
   cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
@@ -117,7 +117,7 @@ Caused by:
   TARGET_CFLAGS = None
   cargo:rerun-if-env-changed=CFLAGS
   CFLAGS = None
-  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/build/zstd-sys-7a3f21542eb15a94/out)
+  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/build/zstd-sys-7a3f21542eb15a94/out)
   cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
   cargo:warning=Compiler family detection failed due to error: ToolNotFound: Failed to find tool. Is `aarch64-linux-android-clang` installed?
   cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
@@ -132,7 +132,7 @@ Caused by:
   TARGET_CFLAGS = None
   cargo:rerun-if-env-changed=CFLAGS
   CFLAGS = None
-  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/rustdesk/target/aarch64-linux-android/release/build/zstd-sys-7a3f21542eb15a94/out)
+  OUT_DIR = Some(/mnt/c/Users/jatin/Downloads/anuvadini/target/aarch64-linux-android/release/build/zstd-sys-7a3f21542eb15a94/out)
   cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
   cargo:warning=Compiler family detection failed due to error: ToolNotFound: Failed to find tool. Is `aarch64-linux-android-clang` installed?
   cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS

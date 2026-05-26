@@ -15,7 +15,7 @@ help: first cast to a pointer `as *const ()`
 warning: `hbb_common` (lib) generated 1 warning (run `cargo fix --lib -p hbb_common` to apply 1 suggestion)
    Compiling tokio-native-tls v0.3.1
    Compiling tungstenite v0.26.2
-   Compiling scrap v0.5.0 (/mnt/c/Users/jatin/Downloads/rustdesk/libs/scrap)
+   Compiling scrap v0.5.0 (/mnt/c/Users/jatin/Downloads/anuvadini/libs/scrap)
    Compiling threadpool v1.8.1
    Compiling hyper-rustls v0.27.7
    Compiling serde_urlencoded v0.7.1
@@ -37,10 +37,10 @@ warning: `hbb_common` (lib) generated 1 warning (run `cargo fix --lib -p hbb_com
    Compiling totp-rs v5.5.1
    Compiling cidr-utils v0.5.11
    Compiling rpassword v7.3.1
-error: failed to run custom build command for `scrap v0.5.0 (/mnt/c/Users/jatin/Downloads/rustdesk/libs/scrap)`
+error: failed to run custom build command for `scrap v0.5.0 (/mnt/c/Users/jatin/Downloads/anuvadini/libs/scrap)`
 
 Caused by:
-  process didn't exit successfully: `/mnt/c/Users/jatin/Downloads/rustdesk/target/release/build/scrap-a8042aa4532a5162/build-script-build` (exit status: 101)
+  process didn't exit successfully: `/mnt/c/Users/jatin/Downloads/anuvadini/target/release/build/scrap-a8042aa4532a5162/build-script-build` (exit status: 101)
   --- stdout
   cargo:rustc-check-cfg=cfg(dxgi,quartz,x11)
   cargo:rerun-if-env-changed=NO_PKG_CONFIG_libyuv
@@ -53,21 +53,21 @@ Caused by:
   cargo:rustc-link-lib=static=vpx
   cargo:rustc-link-search=/home/jatin/vcpkg/installed/arm-android/lib
   cargo:include=/home/jatin/vcpkg/installed/arm-android/include
-  rerun-if-changed=/mnt/c/Users/jatin/Downloads/rustdesk/libs/scrap/src/bindings/vpx_ffi.h
+  rerun-if-changed=/mnt/c/Users/jatin/Downloads/anuvadini/libs/scrap/src/bindings/vpx_ffi.h
   rerun-if-changed=/home/jatin/vcpkg/installed/arm-android/include
   cargo:rerun-if-env-changed=NO_PKG_CONFIG_aom
   cargo:info=arm-android
   cargo:rustc-link-lib=static=aom
   cargo:rustc-link-search=/home/jatin/vcpkg/installed/arm-android/lib
   cargo:include=/home/jatin/vcpkg/installed/arm-android/include
-  rerun-if-changed=/mnt/c/Users/jatin/Downloads/rustdesk/libs/scrap/src/bindings/aom_ffi.h
+  rerun-if-changed=/mnt/c/Users/jatin/Downloads/anuvadini/libs/scrap/src/bindings/aom_ffi.h
   rerun-if-changed=/home/jatin/vcpkg/installed/arm-android/include
 
   --- stderr
-  /mnt/c/Users/jatin/Downloads/rustdesk/libs/scrap/src/bindings/aom_ffi.h:1:10: fatal error: 'aom/aom.h' file not found
+  /mnt/c/Users/jatin/Downloads/anuvadini/libs/scrap/src/bindings/aom_ffi.h:1:10: fatal error: 'aom/aom.h' file not found
 
   thread 'main' (74) panicked at libs/scrap/build.rs:161:18:
-  called `Result::unwrap()` on an `Err` value: ClangDiagnostic("/mnt/c/Users/jatin/Downloads/rustdesk/libs/scrap/src/bindings/aom_ffi.h:1:10: fatal error: 'aom/aom.h' file not found\n")
+  called `Result::unwrap()` on an `Err` value: ClangDiagnostic("/mnt/c/Users/jatin/Downloads/anuvadini/libs/scrap/src/bindings/aom_ffi.h:1:10: fatal error: 'aom/aom.h' file not found\n")
   note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 warning: build failed, waiting for other jobs to finish...
 note: If the build failed due to a missing target, you can run this command:

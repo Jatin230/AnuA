@@ -4,7 +4,7 @@ export PATH=$PATH:/root/flutter_sdk/flutter/bin
 export BOT=true
 export FLUTTER_ALLOW_ROOT=true
 git config --global --add safe.directory /root/flutter_sdk/flutter
-git config --global --add safe.directory /home/jatin/rustdesk
+git config --global --add safe.directory /home/jatin/anuvadini
 . /root/.cargo/env
-cd /home/jatin/rustdesk
+cd /home/jatin/anuvadini
 python3 build.py --flutter

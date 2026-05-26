@@ -1,12 +1,12 @@
-# Contribuzione a RustDesk
+# Contribuzione a Anuvadini
 
-RustDesk accoglie con favore il contributo di tutti.
+Anuvadini accoglie con favore il contributo di tutti.
 Ecco le linee guida se stai pensando di aiutarci.
 
 ## Contribuzione
 
-I contributi a RustDesk o alle sue dipendenze dovrebbero essere forniti sotto forma di richieste pull GitHub. 
-Ogni richiesta pull verr‡ esaminata da un collaboratore principale (qualcuno con il permesso di applicare) ed Ë abilitato all'uso dell'albero principale o dare un feedback per le modifiche che sarebbero necessarie. 
+I contributi a Anuvadini o alle sue dipendenze dovrebbero essere forniti sotto forma di richieste pull GitHub. 
+Ogni richiesta pull verr√† esaminata da un collaboratore principale (qualcuno con il permesso di applicare) ed √® abilitato all'uso dell'albero principale o dare un feedback per le modifiche che sarebbero necessarie. 
 Tutti i contributi dovrebbero seguire questo formato, anche quelli dei contributori principali.
 
 Se desideri lavorare su un problema, rivendicalo prima commentando
@@ -16,22 +16,22 @@ Questo per evitare duplicati sforzi dei contributori sullo stesso problema.
 ## Elenco di controllo delle richieste pull
 
 - Branch del master branch e, se necessario, rebase al master attuale branch prima di inviare la richiesta pull. 
-  Se l'unione non Ë in mod pulito con il master ti potrebbe essere chiesto di effettuare il rebase delle modifiche.
+  Se l'unione non √® in mod pulito con il master ti potrebbe essere chiesto di effettuare il rebase delle modifiche.
 
-- Le modifiche dovrebbero essere le pi˘ piccole possibile, assicurando al tempo stesso che ogni modifica sia corretta in modo indipendente (ovvero, ogni modifica dovrebbe essere compilabile e superare i test).
+- Le modifiche dovrebbero essere le pi√π piccole possibile, assicurando al tempo stesso che ogni modifica sia corretta in modo indipendente (ovvero, ogni modifica dovrebbe essere compilabile e superare i test).
 
-- Le modifiche devono essere accompagnati da un certificato di origine per sviluppatori firmato (http://developercertificate.org), che indica che tu (e il tuo datore di lavoro se applicabile) accetti di essere vincolato dai termini della [licenza progetto](../LICENCE). In git, questa Ë l'opzione `-s` di `git commit`
+- Le modifiche devono essere accompagnati da un certificato di origine per sviluppatori firmato (http://developercertificate.org), che indica che tu (e il tuo datore di lavoro se applicabile) accetti di essere vincolato dai termini della [licenza progetto](../LICENCE). In git, questa √® l'opzione `-s` di `git commit`
 
-- Se la tua patch non viene esaminata o hai bisogno che una persona specifica la esamini, puoi @-rispondere ad un revisore chiedendo una revisione nella richiesta pull o un commento, oppure puoi chiedere una revisione tramite [email](mailto:info@rustdesk.com).
+- Se la tua patch non viene esaminata o hai bisogno che una persona specifica la esamini, puoi @-rispondere ad un revisore chiedendo una revisione nella richiesta pull o un commento, oppure puoi chiedere una revisione tramite [email](mailto:js8160303@gmail.com).
 
-- Aggiungi test relativi al bug corretto o alla nuova funzionalit‡.
+- Aggiungi test relativi al bug corretto o alla nuova funzionalit√†.
 
 Per istruzioni specifiche su git, vedi [Workflow GitHub - 101](https://github.com/servo/servo/wiki/GitHub-workflow).
 
 ## Condotta
 
-https://github.com/rustdesk/rustdesk/blob/master/docs/CODE_OF_CONDUCT-IT.md
+https://github.com/anuvadini/anuvadini/blob/master/docs/CODE_OF_CONDUCT-IT.md
 
 ## Comunicazioni
 
-I contributori di RustDesk frequentano [Discord](https://discord.gg/nDceKgxnkV).
+I contributori di Anuvadini frequentano [Discord](https://discord.gg/nDceKgxnkV).

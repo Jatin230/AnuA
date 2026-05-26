@@ -5,7 +5,7 @@ call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliar
 if errorlevel 1 exit /b 1
 
 set "LLVM_BIN=C:\Program Files\LLVM\bin"
-set "VCPKG_FAKE_ROOT=C:\Users\jatin\Downloads\rustdesk\vcpkg_fake_root"
+set "VCPKG_FAKE_ROOT=C:\Users\jatin\Downloads\anuvadini\vcpkg_fake_root"
 set "VCPKG_INCLUDE=%VCPKG_FAKE_ROOT%\installed\x64-windows-static\include"
 
 set "LIBCLANG_PATH=%LLVM_BIN%"
@@ -19,6 +19,6 @@ for %%I in ("%INCLUDE:;=" "%") do (
   )
 )
 
-echo Launching RustDesk...
+echo Launching Anuvadini...
 cargo run --release --features flutter
 exit /b %ERRORLEVEL%

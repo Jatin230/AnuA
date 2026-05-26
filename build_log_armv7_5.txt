@@ -34,7 +34,7 @@ warning: unused variable: `java_vm`
     |       ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_java_vm`
 
 warning: `scrap` (lib) generated 3 warnings (run `cargo fix --lib -p scrap` to apply 3 suggestions)
-   Compiling anuvadini v1.4.6 (/mnt/c/Users/jatin/Downloads/rustdesk)
+   Compiling anuvadini v1.4.6 (/mnt/c/Users/jatin/Downloads/anuvadini)
 warning: use of deprecated function `hbb_common::base64::encode`: Use Engine::encode
    --> src/hbbs_http/sync.rs:187:52
     |
@@ -45,4 +45,4 @@ warning: use of deprecated function `hbb_common::base64::encode`: Use Engine::en
 
 warning: `anuvadini` (lib) generated 1 warning
     Finished `release` profile [optimized] target(s) in 2m 48s
-     Copying libraries to /mnt/c/Users/jatin/Downloads/rustdesk/flutter/android/app/src/main/jniLibs
+     Copying libraries to /mnt/c/Users/jatin/Downloads/anuvadini/flutter/android/app/src/main/jniLibs

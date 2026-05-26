@@ -192,7 +192,7 @@ class _ScanPageState extends State<ScanPage> {
   }
 
   /// Opens a plain TCP connection to the laptop, sends `ANUVADINI_HELLO`, and
-  /// waits for `ANUVADINI_ACK`.  No RustDesk crypto handshake is involved.
+  /// waits for `ANUVADINI_ACK`.  No Anuvadini crypto handshake is involved.
   Future<void> _registerWithLaptop(
       BuildContext ctx, String ip, int port) async {
     showToast('Connecting to laptop at $ip:$port...');

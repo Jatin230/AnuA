@@ -1,40 +1,40 @@
 <p align="center">
-  <img src="../res/logo-header.svg" alt="RustDesk - Dein Remote-Desktop"><br>
+  <img src="../res/logo-header.svg" alt="Anuvadini - Dein Remote-Desktop"><br>
   <a href="#grobe-schritte-zum-kompilieren">Kompilieren</a> •
   <a href="#auf-docker-kompilieren">Docker</a> •
   <a href="#dateistruktur">Dateistruktur</a> •
   <a href="#screenshots">Screenshots</a><br>
   [<a href="docs/README-UA.md">Українська</a>] | [<a href="docs/README-CS.md">česky</a>] | [<a href="docs/README-ZH.md">中文</a>] | [<a href="docs/README-HU.md">Magyar</a>] | [<a href="docs/README-ES.md">Español</a>] | [<a href="docs/README-FA.md">فارسی</a>] | [<a href="docs/README-FR.md">Français</a>] | [<a href="docs/README-DE.md">Deutsch</a>] | [<a href="docs/README-PL.md">Polski</a>] | [<a href="docs/README-ID.md">Indonesian</a>] | [<a href="docs/README-FI.md">Suomi</a>] | [<a href="docs/README-ML.md">മലയാളം</a>] | [<a href="docs/README-JP.md">日本語</a>] | [<a href="docs/README-NL.md">Nederlands</a>] | [<a href="docs/README-IT.md">Italiano</a>] | [<a href="docs/README-RU.md">Русский</a>] | [<a href="docs/README-PTBR.md">Português (Brasil)</a>] | [<a href="docs/README-EO.md">Esperanto</a>] | [<a href="docs/README-KR.md">한국어</a>] | [<a href="docs/README-AR.md">العربي</a>] | [<a href="docs/README-VN.md">Tiếng Việt</a>] | [<a href="docs/README-DA.md">Dansk</a>] | [<a href="docs/README-GR.md">Ελληνικά</a>] | [<a href="docs/README-TR.md">Türkçe</a>] | [<a href="docs/README-NO.md">Norsk</a>] | [<a href="docs/README-RO.md">Română</a>]<br>
-  <b>Wir brauchen Ihre Hilfe, um dieses README, die <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">RustDesk-Benutzeroberfläche</a> und die <a href="https://github.com/rustdesk/doc.rustdesk.com">Dokumentation</a> in Ihre Muttersprache zu übersetzen.</b>
+  <b>Wir brauchen Ihre Hilfe, um dieses README, die <a href="https://github.com/anuvadini/anuvadini/tree/master/src/lang">Anuvadini-Benutzeroberfläche</a> und die <a href="https://github.com/anuvadini/doc.anuvadini.com">Dokumentation</a> in Ihre Muttersprache zu übersetzen.</b>
 </p>
 
 > [!Caution]
 > **Haftungsausschluss bei Missbrauch::** <br>
-> Die Entwickler von RustDesk billigen oder unterstützen keine unethische oder illegale Nutzung dieser Software. Missbrauch, wie unbefugter Zugriff, unbefugte Kontrolle oder Verletzung der Privatsphäre, verstößt strikt gegen unsere Richtlinien. Die Autoren sind nicht verantwortlich für jeglichen Missbrauch der Anwendung.
+> Die Entwickler von Anuvadini billigen oder unterstützen keine unethische oder illegale Nutzung dieser Software. Missbrauch, wie unbefugter Zugriff, unbefugte Kontrolle oder Verletzung der Privatsphäre, verstößt strikt gegen unsere Richtlinien. Die Autoren sind nicht verantwortlich für jeglichen Missbrauch der Anwendung.
 
 
-Reden Sie mit uns auf: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
+Reden Sie mit uns auf: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/anuvadini) | [Reddit](https://www.reddit.com/r/anuvadini) | [YouTube](https://www.youtube.com/@anuvadini)
 
-[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Erweiterte%20Funktionen-blue)](https://rustdesk.com/pricing.html)
+[![Anuvadini Server Pro](https://img.shields.io/badge/Anuvadini%20Server%20Pro-Erweiterte%20Funktionen-blue)](https://anuvadini.com/pricing.html)
 
-RustDesk ist eine in Rust geschriebene Remote-Desktop-Software, die out of the box ohne besondere Konfiguration funktioniert. Sie haben die volle Kontrolle über Ihre Daten und müssen sich keine Sorgen um die Sicherheit machen. Sie können unseren Rendezvous/Relay-Server nutzen, [einen eigenen Server aufsetzen](https://rustdesk.com/server) oder [einen eigenen Server programmieren](https://github.com/rustdesk/rustdesk-server-demo).
+Anuvadini ist eine in Rust geschriebene Remote-Desktop-Software, die out of the box ohne besondere Konfiguration funktioniert. Sie haben die volle Kontrolle über Ihre Daten und müssen sich keine Sorgen um die Sicherheit machen. Sie können unseren Rendezvous/Relay-Server nutzen, [einen eigenen Server aufsetzen](https://anuvadini.com/server) oder [einen eigenen Server programmieren](https://github.com/anuvadini/anuvadini-server-demo).
 
 ![image](https://user-images.githubusercontent.com/71636191/171661982-430285f0-2e12-4b1d-9957-4a58e375304d.png)
 
-RustDesk heißt jegliche Mitarbeit willkommen. Schauen Sie sich [CONTRIBUTING-DE.md](CONTRIBUTING-DE.md) an, wenn Sie Unterstützung beim Start brauchen.
+Anuvadini heißt jegliche Mitarbeit willkommen. Schauen Sie sich [CONTRIBUTING-DE.md](CONTRIBUTING-DE.md) an, wenn Sie Unterstützung beim Start brauchen.
 
-[**FAQ**](https://github.com/rustdesk/rustdesk/wiki/FAQ)
+[**FAQ**](https://github.com/anuvadini/anuvadini/wiki/FAQ)
 
-[**Programm herunterladen**](https://github.com/rustdesk/rustdesk/releases)
+[**Programm herunterladen**](https://github.com/anuvadini/anuvadini/releases)
 
-[**Nightly Builds**](https://github.com/rustdesk/rustdesk/releases/tag/nightly)
+[**Nightly Builds**](https://github.com/anuvadini/anuvadini/releases/tag/nightly)
 
 [<img src="https://f-droid.org/badge/get-it-on.png"
     alt="Get it on F-Droid"
     height="80">](https://f-droid.org/en/packages/com.carriez.flutter_hbb)
 [<img src="https://flathub.org/api/badge?svg&locale=en"
     alt="Get it on Flathub"
-    height="80">](https://flathub.org/apps/com.rustdesk.RustDesk)
+    height="80">](https://flathub.org/apps/com.anuvadini.Anuvadini)
 
 ## Abhängigkeiten
 
@@ -57,7 +57,7 @@ Bitte laden Sie die dynamische Bibliothek Sciter selbst herunter.
 
 - Nutzen Sie `cargo run`
 
-## [Erstellen](https://rustdesk.com/docs/de/dev/build/)
+## [Erstellen](https://anuvadini.com/docs/de/dev/build/)
 
 ## Kompilieren auf Linux
 
@@ -117,8 +117,8 @@ cd
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
-git clone --recurse-submodules https://github.com/rustdesk/rustdesk
-cd rustdesk
+git clone --recurse-submodules https://github.com/anuvadini/anuvadini
+cd anuvadini
 mkdir -p target/debug
 wget https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/libsciter-gtk.so
 mv libsciter-gtk.so target/debug
@@ -130,53 +130,53 @@ VCPKG_ROOT=$HOME/vcpkg cargo run
 Beginnen Sie damit, das Repository zu klonen und den Docker-Container zu bauen:
 
 ```sh
-git clone https://github.com/rustdesk/rustdesk
-cd rustdesk
+git clone https://github.com/anuvadini/anuvadini
+cd anuvadini
 git submodule update --init --recursive
-docker build -t "rustdesk-builder" .
+docker build -t "anuvadini-builder" .
 ```
 
 Führen Sie jedes Mal, wenn Sie das Programm kompilieren müssen, folgenden Befehl aus:
 
 ```sh
-docker run --rm -it -v $PWD:/home/user/rustdesk -v rustdesk-git-cache:/home/user/.cargo/git -v rustdesk-registry-cache:/home/user/.cargo/registry -e PUID="$(id -u)" -e PGID="$(id -g)" rustdesk-builder
+docker run --rm -it -v $PWD:/home/user/anuvadini -v anuvadini-git-cache:/home/user/.cargo/git -v anuvadini-registry-cache:/home/user/.cargo/registry -e PUID="$(id -u)" -e PGID="$(id -g)" anuvadini-builder
 ```
 
 Bedenken Sie, dass das erste Kompilieren länger dauern kann, bis die Abhängigkeiten zwischengespeichert sind. Nachfolgende Kompiliervorgänge sind schneller. Wenn Sie verschiedene Argumente für den Kompilierbefehl angeben müssen, können Sie dies am Ende des Befehls an der Position `<OPTIONAL-ARGS>` tun. Wenn Sie zum Beispiel eine optimierte Releaseversion kompilieren wollen, können Sie `--release` am Ende des Befehls anhängen. Das daraus entstehende Programm finden Sie im Zielordner auf Ihrem System. Sie können es mit folgendem Befehl ausführen:
 
 ```sh
-target/debug/rustdesk
+target/debug/anuvadini
 ```
 
 Oder, wenn Sie eine Releaseversion benutzen:
 
 ```sh
-target/release/rustdesk
+target/release/anuvadini
 ```
 
-Bitte stellen Sie sicher, dass Sie diese Befehle im Stammverzeichnis des RustDesk-Repositorys nutzen. Ansonsten kann es passieren, dass das Programm die Ressourcen nicht finden kann. Bitte bedenken Sie auch, dass andere Cargo-Unterbefehle wie `install` oder `run` aktuell noch nicht unterstützt werden, da sie das Programm innerhalb des Containers starten oder installieren würden, anstatt auf Ihrem eigentlichen System.
+Bitte stellen Sie sicher, dass Sie diese Befehle im Stammverzeichnis des Anuvadini-Repositorys nutzen. Ansonsten kann es passieren, dass das Programm die Ressourcen nicht finden kann. Bitte bedenken Sie auch, dass andere Cargo-Unterbefehle wie `install` oder `run` aktuell noch nicht unterstützt werden, da sie das Programm innerhalb des Containers starten oder installieren würden, anstatt auf Ihrem eigentlichen System.
 
 ## Dateistruktur
 
-- **[libs/hbb_common](https://github.com/rustdesk/rustdesk/tree/master/libs/hbb_common)**: Video-Codec, Konfiguration, TCP/UDP-Wrapper, Protokoll-Puffer, fs-Funktionen für Dateitransfer und ein paar andere nützliche Funktionen
-- **[libs/scrap](https://github.com/rustdesk/rustdesk/tree/master/libs/scrap)**: Bildschirmaufnahme
-- **[libs/enigo](https://github.com/rustdesk/rustdesk/tree/master/libs/enigo)**: Plattformspezifische Maus- und Tastatursteuerung
-- **[libs/clipboard](https://github.com/rustdesk/rustdesk/tree/master/libs/clipboard)**: Datei kopieren und einfügen Implementierung für Windows, Linux, macOS.
-- **[src/ui](https://github.com/rustdesk/rustdesk/tree/master/src/ui)**: GUI
-- **[src/server](https://github.com/rustdesk/rustdesk/tree/master/src/server)**: Audio/Zwischenablage/Eingabe/Videodienste und Netzwerkverbindungen
-- **[src/client.rs](https://github.com/rustdesk/rustdesk/tree/master/src/client.rs)**: Starten einer Peer-Verbindung
-- **[src/rendezvous_mediator.rs](https://github.com/rustdesk/rustdesk/tree/master/src/rendezvous_mediator.rs)**: Mit [rustdesk-server](https://github.com/rustdesk/rustdesk-server) kommunizieren, warten auf direkte (TCP hole punching) oder weitergeleitete Verbindung
-- **[src/platform](https://github.com/rustdesk/rustdesk/tree/master/src/platform)**: Plattformspezifischer Code
-- **[flutter](https://github.com/rustdesk/rustdesk/tree/master/flutter)**: Flutter-Code für Handys
-- **[flutter/web/js](https://github.com/rustdesk/rustdesk/tree/master/flutter/web/js)**: JavaScript für Flutter-Webclient
+- **[libs/hbb_common](https://github.com/anuvadini/anuvadini/tree/master/libs/hbb_common)**: Video-Codec, Konfiguration, TCP/UDP-Wrapper, Protokoll-Puffer, fs-Funktionen für Dateitransfer und ein paar andere nützliche Funktionen
+- **[libs/scrap](https://github.com/anuvadini/anuvadini/tree/master/libs/scrap)**: Bildschirmaufnahme
+- **[libs/enigo](https://github.com/anuvadini/anuvadini/tree/master/libs/enigo)**: Plattformspezifische Maus- und Tastatursteuerung
+- **[libs/clipboard](https://github.com/anuvadini/anuvadini/tree/master/libs/clipboard)**: Datei kopieren und einfügen Implementierung für Windows, Linux, macOS.
+- **[src/ui](https://github.com/anuvadini/anuvadini/tree/master/src/ui)**: GUI
+- **[src/server](https://github.com/anuvadini/anuvadini/tree/master/src/server)**: Audio/Zwischenablage/Eingabe/Videodienste und Netzwerkverbindungen
+- **[src/client.rs](https://github.com/anuvadini/anuvadini/tree/master/src/client.rs)**: Starten einer Peer-Verbindung
+- **[src/rendezvous_mediator.rs](https://github.com/anuvadini/anuvadini/tree/master/src/rendezvous_mediator.rs)**: Mit [anuvadini-server](https://github.com/anuvadini/anuvadini-server) kommunizieren, warten auf direkte (TCP hole punching) oder weitergeleitete Verbindung
+- **[src/platform](https://github.com/anuvadini/anuvadini/tree/master/src/platform)**: Plattformspezifischer Code
+- **[flutter](https://github.com/anuvadini/anuvadini/tree/master/flutter)**: Flutter-Code für Handys
+- **[flutter/web/js](https://github.com/anuvadini/anuvadini/tree/master/flutter/web/js)**: JavaScript für Flutter-Webclient
 
 ## Screenshots
 
-![Verbindungsmanager](https://github.com/rustdesk/rustdesk/assets/28412477/db82d4e7-c4bc-4823-8e6f-6af7eadf7651)
+![Verbindungsmanager](https://github.com/anuvadini/anuvadini/assets/28412477/db82d4e7-c4bc-4823-8e6f-6af7eadf7651)
 
-![Verbunden zu einem Windows PC](https://github.com/rustdesk/rustdesk/assets/28412477/9baa91e9-3362-4d06-aa1a-7518edcbd7ea)
+![Verbunden zu einem Windows PC](https://github.com/anuvadini/anuvadini/assets/28412477/9baa91e9-3362-4d06-aa1a-7518edcbd7ea)
 
-![Dateiübertragung](https://github.com/rustdesk/rustdesk/assets/28412477/39511ad3-aa9a-4f8c-8947-1cce286a46ad)
+![Dateiübertragung](https://github.com/anuvadini/anuvadini/assets/28412477/39511ad3-aa9a-4f8c-8947-1cce286a46ad)
 
-![TCP-Tunneling](https://github.com/rustdesk/rustdesk/assets/28412477/78e8708f-e87e-4570-8373-1360033ea6c5)
+![TCP-Tunneling](https://github.com/anuvadini/anuvadini/assets/28412477/78e8708f-e87e-4570-8373-1360033ea6c5)
 
