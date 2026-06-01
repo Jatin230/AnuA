@@ -25,18 +25,6 @@ class _MobileControlPageState extends State<MobileControlPage> {
     super.initState();
     _generateConnectionUrl();
     _setupEventListener();
-    
-    // TEMPORARY DEBUG: Confirm Dart code is updated
-    Future.delayed(Duration.zero, () {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text("DEBUG: DART UPDATED"),
-          content: const Text("This confirms you are running the NEW Flutter build."),
-          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK"))],
-        ),
-      );
-    });
   }
 
   bool _serverReady = false;
@@ -406,6 +394,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
       isTerminal: false,
       isTcpTunneling: false,
       isRDP: false,
+      openInTabsOverride: false,
     );
     showToast('Launching session to control phone...');
   }

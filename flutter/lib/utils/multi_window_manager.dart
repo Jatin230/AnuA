@@ -230,6 +230,7 @@ class AnuvadiniMultiWindowManager {
     bool? isRDP,
     bool? isSharedPassword,
     String? connToken,
+    bool? openInTabsOverride,
   }) async {
     var params = {
       "type": type.index,
@@ -252,8 +253,9 @@ class AnuvadiniMultiWindowManager {
     final msg = jsonEncode(params);
 
     // separate window for file transfer is not supported
-    bool openInTabs = type != WindowType.RemoteDesktop ||
-        mainGetLocalBoolOptionSync(kOptionOpenNewConnInTabs);
+    bool openInTabs = openInTabsOverride ??
+        (type != WindowType.RemoteDesktop ||
+            mainGetLocalBoolOptionSync(kOptionOpenNewConnInTabs));
 
     if (windows.length > 1 || !openInTabs) {
       for (final windowId in windows) {
@@ -273,6 +275,7 @@ class AnuvadiniMultiWindowManager {
     bool? isSharedPassword,
     String? switchUuid,
     bool? forceRelay,
+    bool? openInTabsOverride,
   }) async {
     return await newSession(
       WindowType.RemoteDesktop,
@@ -283,6 +286,7 @@ class AnuvadiniMultiWindowManager {
       forceRelay: forceRelay,
       switchUuid: switchUuid,
       isSharedPassword: isSharedPassword,
+      openInTabsOverride: openInTabsOverride,
     );
   }
 

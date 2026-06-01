@@ -2467,6 +2467,7 @@ connectMainDesktop(String id,
     required bool isTerminal,
     required bool isTcpTunneling,
     required bool isRDP,
+    bool? openInTabsOverride,
     bool? forceRelay,
     String? password,
     String? connToken,
@@ -2499,7 +2500,8 @@ connectMainDesktop(String id,
     await anuvadiniWinManager.newRemoteDesktop(id,
         password: password,
         isSharedPassword: isSharedPassword,
-        forceRelay: forceRelay);
+        forceRelay: forceRelay,
+        openInTabsOverride: openInTabsOverride);
   }
 }
 
