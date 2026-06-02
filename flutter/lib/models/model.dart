@@ -2140,6 +2140,16 @@ class CanvasModel with ChangeNotifier {
   double _scale = 1.0;
   double _devicePixelRatio = 1.0;
   Size _size = Size.zero;
+
+  // Added for inline streams in dashboard
+  Size? _fixedSize;
+  set fixedSize(Size? size) {
+    if (_fixedSize != size) {
+      _fixedSize = size;
+      updateViewStyle();
+    }
+  }
+
   // the tabbar over the image
   // double tabBarHeight = 0.0;
   // the window border's width
@@ -2224,6 +2234,8 @@ class CanvasModel with ChangeNotifier {
       isDesktop ? windowBorderWidth + kDragToResizeAreaPadding.bottom : 0;
 
   Size getSize() {
+    if (_fixedSize != null) return _fixedSize!;
+
     final mediaData = MediaQueryData.fromView(ui.window);
     final size = mediaData.size;
     // If minimized, w or h may be negative here.
@@ -3935,6 +3947,7 @@ class FFI {
     if (closeSession) {
       await bind.sessionClose(sessionId: sessionId);
     }
+    await textureModel.dispose(closeSession);
     debugPrint('model $id closed');
     id = '';
   }

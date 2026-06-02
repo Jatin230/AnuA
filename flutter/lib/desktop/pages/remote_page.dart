@@ -321,7 +321,6 @@ class _RemotePageState extends State<RemotePage>
     // Clear callback reference to prevent memory leaks and stale references
     _ffi.inputModel.onRelativeMouseModeDisabled = null;
     // Relative mouse mode cleanup is centralized in FFI.close(closeSession: ...).
-    _ffi.textureModel.onRemotePageDispose(closeSession);
     if (closeSession) {
       // ensure we leave this session, this is a double check
       _ffi.inputModel.enterOrLeave(false);

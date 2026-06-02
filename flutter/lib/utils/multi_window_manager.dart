@@ -153,7 +153,7 @@ class AnuvadiniMultiWindowManager {
   ) async {
     final windowController = await DesktopMultiWindow.createWindow(msg);
     if (isWindows) {
-      windowController.setInitBackgroundColor(Colors.black);
+      windowController.setInitBackgroundColor(const Color(0xFF212121));
     }
     final windowId = windowController.windowId;
     if (!withScreenRect) {

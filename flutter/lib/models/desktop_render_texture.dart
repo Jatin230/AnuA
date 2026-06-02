@@ -224,26 +224,18 @@ class TextureModel {
     }
   }
 
-  onRemotePageDispose(bool closeSession) async {
+  dispose(bool unregisterTexture) async {
     final ffi = parent.target;
     if (ffi == null) return;
     for (final texture in _pixelbufferRenderTextures.values) {
-      await texture.destroy(closeSession, ffi);
+      await texture.destroy(unregisterTexture, ffi);
     }
+    _pixelbufferRenderTextures.clear();
     for (final texture in _gpuRenderTextures.values) {
-      await texture.destroy(closeSession, ffi);
+      await texture.destroy(unregisterTexture, ffi);
     }
-  }
-
-  onViewCameraPageDispose(bool closeSession) async {
-    final ffi = parent.target;
-    if (ffi == null) return;
-    for (final texture in _pixelbufferRenderTextures.values) {
-      await texture.destroy(closeSession, ffi);
-    }
-    for (final texture in _gpuRenderTextures.values) {
-      await texture.destroy(closeSession, ffi);
-    }
+    _gpuRenderTextures.clear();
+    _control.clear();
   }
 
   ensureControl(int display) {

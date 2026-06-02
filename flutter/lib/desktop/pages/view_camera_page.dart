@@ -222,7 +222,6 @@ class _ViewCameraPageState extends State<ViewCameraPage>
     // https://github.com/flutter/flutter/issues/64935
     super.dispose();
     debugPrint("VIEW CAMERA PAGE dispose session $sessionId ${widget.id}");
-    _ffi.textureModel.onViewCameraPageDispose(closeSession);
     if (closeSession) {
       // ensure we leave this session, this is a double check
       _ffi.inputModel.enterOrLeave(false);

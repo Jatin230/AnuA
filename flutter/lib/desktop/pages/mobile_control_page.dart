@@ -1,16 +1,21 @@
-import 'dart:io';
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:qr_flutter/qr_flutter.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/common/shared_state.dart';
+import 'package:flutter_hbb/common/widgets/remote_input.dart';
+import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 class MobileControlPage extends StatefulWidget {
   const MobileControlPage({super.key});
 
   @override
+  // ignore: library_private_types_in_public_api
   _MobileControlPageState createState() => _MobileControlPageState();
 }
 
@@ -18,7 +23,15 @@ class _MobileControlPageState extends State<MobileControlPage> {
   String? _connectionUrl;
   String? _error;
   bool _loading = false;
+  final TextEditingController _manualIpController = TextEditingController();
   final List<Map<String, String>> _registeredDevices = [];
+  final Map<String, FFI> _activeSessions = {};
+  final Map<String, String> _sessionStatus = {};
+  bool _sidebarExpanded = true;
+
+  bool _serverReady = false;
+  bool _rustAlive = false;
+  List<String> _allLocalIps = [];
 
   @override
   void initState() {
@@ -27,37 +40,42 @@ class _MobileControlPageState extends State<MobileControlPage> {
     _setupEventListener();
   }
 
-  bool _serverReady = false;
-  bool _rustAlive = false;
-  DateTime? _lastHeartbeat;
+  @override
+  void dispose() {
+    _manualIpController.dispose();
+    for (final ffi in _activeSessions.values) {
+      ffi.close();
+    }
+    _activeSessions.clear();
+    super.dispose();
+  }
 
   void _setupEventListener() {
-    // Listen for server status
-    platformFFI.registerEventHandler("direct_server_status", "mobile_control_page_status", (evt) async {
-       if (evt['data'] == 'started') {
-         setState(() => _serverReady = true);
-       }
+    platformFFI.registerEventHandler(
+        'direct_server_status', 'mobile_control_page_status', (evt) async {
+      if (evt['data'] == 'started' && mounted) {
+        setState(() => _serverReady = true);
+      }
     });
 
-    // Listen for rust heartbeat
-    platformFFI.registerEventHandler("rust_heartbeat", "mobile_control_page_heartbeat", (evt) async {
-       setState(() {
-         _rustAlive = true;
-         _lastHeartbeat = DateTime.now();
-       });
+    platformFFI.registerEventHandler(
+        'rust_heartbeat', 'mobile_control_page_heartbeat', (evt) async {
+      if (mounted) {
+        setState(() {
+          _rustAlive = true;
+        });
+      }
     });
 
-    // Register the handler for mobile registration events
-    platformFFI.registerEventHandler("mobile_device_registered", "mobile_control_page", (evt) async {
+    platformFFI.registerEventHandler(
+        'mobile_device_registered', 'mobile_control_page', (evt) async {
       try {
         final device = Map<String, String>.from(json.decode(evt['data']));
+        if (!mounted) return;
         setState(() {
-          // Add or update the device in the list
-          _registeredDevices.removeWhere((d) => d['id'] == device['id']);
+          _registeredDevices.removeWhere((d) => _deviceKey(d) == _deviceKey(device));
           _registeredDevices.add(device);
         });
-        
-        // Show the interactive Action Dialog on the laptop
         _showDeviceActionDialog(device);
       } catch (e) {
         debugPrint('Failed to parse registration: $e');
@@ -73,22 +91,20 @@ class _MobileControlPageState extends State<MobileControlPage> {
         content: const Text('A mobile device has just scanned your QR code. What would you like to do?'),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-            },
+            onPressed: () => Navigator.pop(context),
             child: const Text('Later'),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              _controlPhone(device['ip']!);
+              _connectDevice(device);
             },
             child: const Text('Control Phone'),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              _authorizePhone(device['id']!);
+              _authorizePhone(device['id'] ?? _deviceKey(device));
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
             child: const Text('Authorize Phone to Control Me'),
@@ -98,8 +114,6 @@ class _MobileControlPageState extends State<MobileControlPage> {
     );
   }
 
-  List<String> _allLocalIps = [];
-
   Future<void> _generateConnectionUrl() async {
     setState(() {
       _loading = true;
@@ -107,15 +121,15 @@ class _MobileControlPageState extends State<MobileControlPage> {
       _allLocalIps = [];
     });
     try {
-      final interfaces = await NetworkInterface.list(includeLoopback: false, type: InternetAddressType.IPv4);
+      final interfaces = await NetworkInterface.list(
+          includeLoopback: false, type: InternetAddressType.IPv4);
       for (var interface in interfaces) {
         final name = interface.name.toLowerCase();
-        // Ignore virtual adapters that belong to WSL, VMware, VirtualBox, etc.
-        if (name.contains('wsl') || 
-            name.contains('virtual') || 
-            name.contains('vbox') || 
-            name.contains('vmware') || 
-            name.contains('vethernet') || 
+        if (name.contains('wsl') ||
+            name.contains('virtual') ||
+            name.contains('vbox') ||
+            name.contains('vmware') ||
+            name.contains('vethernet') ||
             name.contains('host-only') ||
             name.contains('loopback')) {
           continue;
@@ -126,16 +140,15 @@ class _MobileControlPageState extends State<MobileControlPage> {
           }
         }
       }
-      
+
       if (_allLocalIps.isEmpty) {
-        // Fallback to all IPs if physical interfaces couldn't be detected
         for (var interface in interfaces) {
           for (var addr in interface.addresses) {
             if (!addr.isLoopback) _allLocalIps.add(addr.address);
           }
         }
       }
-      
+
       if (_allLocalIps.isEmpty) {
         setState(() {
           _error = 'No network IP found. Connect to Wi-Fi.';
@@ -144,26 +157,21 @@ class _MobileControlPageState extends State<MobileControlPage> {
         return;
       }
 
-      // Prioritize the best IP: 192.168 first, then 10., then 172., then others
-      String localIp = _allLocalIps.firstWhere(
-        (ip) => ip.startsWith('192.168.'), 
-        orElse: () => _allLocalIps.firstWhere(
-          (ip) => ip.startsWith('10.'),
-          orElse: () => _allLocalIps.firstWhere(
-            (ip) => ip.startsWith('172.'),
-            orElse: () => _allLocalIps.first,
-          ),
-        ),
-      );
-      
-      // Use a direct-tcp format that the existing Android app can parse correctly
+      final localIp = _allLocalIps.firstWhere((ip) => ip.startsWith('192.168.'),
+          orElse: () => _allLocalIps.firstWhere((ip) => ip.startsWith('10.'),
+              orElse: () => _allLocalIps.firstWhere((ip) => ip.startsWith('172.'),
+                  orElse: () => _allLocalIps.first)));
+
       final url = 'anuvadini://direct-tcp:${localIp}_port_21118';
       setState(() {
         _connectionUrl = url;
         _loading = false;
       });
     } catch (e) {
-      setState(() { _error = e.toString(); _loading = false; });
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
     }
   }
 
@@ -176,20 +184,43 @@ class _MobileControlPageState extends State<MobileControlPage> {
       ),
       body: Row(
         children: [
-          // Left Side: QR Code & Setup
-          Expanded(
-            flex: 2,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: _buildSetupCard(),
-            ),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: _sidebarExpanded ? 360 : 56,
+            child: _buildSidebar(),
           ),
-          // Right Side: Active Devices List
           VerticalDivider(width: 1, color: Colors.grey[300]),
-          Expanded(
-            flex: 3,
-            child: _buildDeviceList(),
+          Expanded(child: _buildDeviceDashboard()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSidebar() {
+    if (!_sidebarExpanded) {
+      return Align(
+        alignment: Alignment.topCenter,
+        child: IconButton(
+          icon: const Icon(Icons.chevron_right),
+          onPressed: () => setState(() => _sidebarExpanded = true),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.chevron_left),
+                onPressed: () => setState(() => _sidebarExpanded = false),
+              ),
+              const Text('Setup', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
           ),
+          _buildSetupCard(),
         ],
       ),
     );
@@ -200,92 +231,71 @@ class _MobileControlPageState extends State<MobileControlPage> {
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
-        padding: const EdgeInsets.all(24.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            const Icon(Icons.qr_code_scanner, size: 48, color: MyTheme.accent),
-            const SizedBox(height: 16),
-            const Text(
-              'Pair New Device',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
+            const Icon(Icons.qr_code_scanner, size: 40, color: MyTheme.accent),
             const SizedBox(height: 8),
-            const Text(
-              'Scan this QR code with the Anuvadini app on your phone to register it with this laptop.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey, fontSize: 13),
-            ),
-            const SizedBox(height: 24),
+            const Text('Pair New Device', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
             if (_loading) const CircularProgressIndicator(),
             if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
             if (_connectionUrl != null) ...[
               QrImageView(
                 data: _connectionUrl!,
                 version: QrVersions.auto,
-                size: 200.0,
+                size: 180,
                 backgroundColor: Colors.white,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: _generateConnectionUrl,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Refresh IP'),
               ),
             ],
-            const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 16),
-            const Text('Manual Fallback', style: TextStyle(fontWeight: FontWeight.bold)),
-            const Text('Type the IP shown on your phone:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      hintText: 'e.g. 192.168.1.5',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    onSubmitted: (val) => _controlPhone(val),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: () {
-                    // Manual connect logic
-                  },
-                  child: const Text('Connect'),
-                ),
-              ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _manualIpController,
+              decoration: const InputDecoration(
+                hintText: 'Manual IP (e.g. 192.168.1.5)',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onSubmitted: _connectManualIp,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => _connectManualIp(_manualIpController.text.trim()),
+                child: const Text('Connect Manual IP'),
+              ),
+            ),
+            const SizedBox(height: 12),
             const Divider(),
-            const SizedBox(height: 16),
-            const Text('Troubleshooting:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-            ..._allLocalIps.map((ip) => Text('• Laptop IP: $ip', style: const TextStyle(fontSize: 11, color: Colors.blue))),
             const SizedBox(height: 8),
             Row(
               children: [
                 Icon(Icons.circle, size: 10, color: _serverReady ? Colors.green : Colors.orange),
                 const SizedBox(width: 4),
                 Text(
-                  _serverReady ? 'Status: Ready (Listening on 21118)' : 'Status: Initializing Listener...',
+                  _serverReady ? 'Listener: Ready' : 'Listener: Initializing',
                   style: TextStyle(
-                    color: _serverReady ? Colors.green : Colors.orange, 
-                    fontSize: 11, 
-                    fontWeight: FontWeight.bold
+                    color: _serverReady ? Colors.green : Colors.orange,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 4),
             Text(
-              _rustAlive ? 'Backend Heartbeat: Alive' : 'Backend Heartbeat: Waiting...',
+              _rustAlive ? 'Backend Heartbeat: Alive' : 'Backend Heartbeat: Waiting',
               style: TextStyle(
                 color: _rustAlive ? Colors.blue : Colors.grey,
                 fontSize: 10,
-                fontStyle: FontStyle.italic
+                fontStyle: FontStyle.italic,
               ),
             ),
           ],
@@ -294,9 +304,9 @@ class _MobileControlPageState extends State<MobileControlPage> {
     );
   }
 
-  Widget _buildDeviceList() {
-    return Container(
-      padding: const EdgeInsets.all(24),
+  Widget _buildDeviceDashboard() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -304,14 +314,13 @@ class _MobileControlPageState extends State<MobileControlPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
-                'Active Mobile Devices',
+                'Mobile Streams Dashboard',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
               ),
-              if (_registeredDevices.isNotEmpty)
-                Chip(
-                  label: Text('${_registeredDevices.length} Connected'),
-                  backgroundColor: MyTheme.accent.withOpacity(0.1),
-                ),
+              Chip(
+                label: Text('${_activeSessions.length} Live'),
+                backgroundColor: MyTheme.accent.withOpacity(0.1),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -322,20 +331,32 @@ class _MobileControlPageState extends State<MobileControlPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.mobile_off, size: 64, color: Colors.grey),
-                    SizedBox(height: 16),
-                    Text('No devices paired yet.', style: TextStyle(color: Colors.grey)),
+                    SizedBox(height: 12),
+                    Text('No paired devices yet.', style: TextStyle(color: Colors.grey)),
                   ],
                 ),
               ),
             )
           else
             Expanded(
-              child: ListView.separated(
-                itemCount: _registeredDevices.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  final device = _registeredDevices[index];
-                  return _buildDeviceTile(device);
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final crossAxisCount = constraints.maxWidth > 1200
+                      ? 3
+                      : constraints.maxWidth > 800
+                          ? 2
+                          : 1;
+                  return GridView.builder(
+                    itemCount: _registeredDevices.length,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: crossAxisCount,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                      childAspectRatio: 0.75, // Better for portrait phones
+                    ),
+                    itemBuilder: (context, index) =>
+                        _buildDevicePanel(_registeredDevices[index]),
+                  );
                 },
               ),
             ),
@@ -344,39 +365,86 @@ class _MobileControlPageState extends State<MobileControlPage> {
     );
   }
 
-  Widget _buildDeviceTile(Map<String, String> device) {
+  Widget _buildDevicePanel(Map<String, String> device) {
+    final key = _deviceKey(device);
+    final ffi = _activeSessions[key];
+    final isConnected = ffi != null;
+    final status = _sessionStatus[key] ?? (isConnected ? 'Connected' : 'Disconnected');
+
     return Card(
-      elevation: 1,
+      elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Colors.blueAccent.withOpacity(0.1),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.phone_android, color: Colors.blueAccent),
-        ),
-        title: Text(
-          device['name'] ?? 'Unknown Device',
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Text('IP: ${device['ip']}'),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ElevatedButton.icon(
-              icon: const Icon(Icons.visibility, size: 16),
-              label: const Text('Control Phone'),
-              onPressed: () => _controlPhone(device['ip']!),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blueAccent.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.phone_android, color: Colors.blueAccent),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(device['name'] ?? 'Unknown Device', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Text('IP: ${device['ip'] ?? '-'}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _statusColor(status).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    status,
+                    style: TextStyle(
+                      color: _statusColor(status),
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.laptop, size: 16),
-              label: const Text('Let Phone Control Me'),
-              onPressed: () => _authorizePhone(device['ip']!),
+            const SizedBox(height: 10),
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(color: const Color(0xFF212121), borderRadius: BorderRadius.circular(8)),
+                clipBehavior: Clip.antiAlias,
+                child: ffi == null
+                    ? const Center(child: Text('Not Connected', style: TextStyle(color: Colors.white70)))
+                    : InlineStreamPanel(deviceKey: key, ffi: ffi),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: Icon(isConnected ? Icons.link_off : Icons.link, size: 16),
+                    label: Text(isConnected ? 'Disconnect' : 'Connect'),
+                    onPressed: () => isConnected ? _disconnectDevice(device) : _connectDevice(device),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.laptop, size: 16),
+                    label: const Text('Authorize'),
+                    onPressed: () => _authorizePhone(device['id'] ?? key),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -384,30 +452,232 @@ class _MobileControlPageState extends State<MobileControlPage> {
     );
   }
 
-  void _controlPhone(String ip) async {
-    final address = 'direct-tcp:${ip}_port_21118';
-    debugPrint('Connecting to phone at: $address');
-    await connectMainDesktop(
-      address,
-      isFileTransfer: false,
-      isViewCamera: false,
-      isTerminal: false,
-      isTcpTunneling: false,
-      isRDP: false,
-      openInTabsOverride: false,
-    );
-    showToast('Launching session to control phone...');
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'Connected':
+        return Colors.green;
+      case 'Connecting':
+        return Colors.orange;
+      case 'Error':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _deviceKey(Map<String, String> device) => device['id'] ?? device['ip'] ?? '';
+
+  void _connectManualIp(String ip) {
+    final cleaned = ip.trim();
+    if (cleaned.isEmpty) return;
+    final device = <String, String>{
+      'id': cleaned,
+      'name': 'Manual $cleaned',
+      'ip': cleaned,
+    };
+    setState(() {
+      _registeredDevices.removeWhere((d) => _deviceKey(d) == _deviceKey(device));
+      _registeredDevices.add(device);
+    });
+    _connectDevice(device);
+  }
+
+  Future<void> _connectDevice(Map<String, String> device) async {
+    final ip = device['ip'];
+    if (ip == null || ip.isEmpty) {
+      showToast('Device IP is missing.');
+      return;
+    }
+    final key = _deviceKey(device);
+    if (_activeSessions.containsKey(key)) return;
+
+    setState(() => _sessionStatus[key] = 'Connecting');
+
+    try {
+      // Use a unique SessionID per panel so sessions are fully isolated
+      final ffi = FFI(null);
+      Get.put<FFI>(ffi, tag: 'mobile-inline-$key', permanent: false);
+
+      final connectionId = 'direct-tcp:${ip}_port_21118';
+      initSharedStates(connectionId);
+
+      // Mark as Connected when the first decoded frame arrives
+      ffi.imageModel.addCallbackOnFirstImage((_) {
+        if (mounted) setState(() => _sessionStatus[key] = 'Connected');
+      });
+
+      // ffi.start() internally sets up the per-session Rust event stream.
+      // Do NOT call ffi.ffiModel.updateEventListener() after this — that
+      // method overwrites the GLOBAL platformFFI event callback, which
+      // would break all other active sessions.
+      ffi.start(connectionId);
+
+      setState(() {
+        _activeSessions[key] = ffi;
+      });
+      showToast('Connecting to $ip...');
+    } catch (e) {
+      setState(() => _sessionStatus[key] = 'Error');
+      showToast('Failed to connect $ip: $e');
+    }
+  }
+
+  Future<void> _disconnectDevice(Map<String, String> device) async {
+    final key = _deviceKey(device);
+    final ffi = _activeSessions[key];
+    if (ffi == null) return;
+
+    final ip = device['ip'];
+    final connectionId = 'direct-tcp:${ip}_port_21118';
+    removeSharedStates(connectionId);
+
+    await ffi.close();
+    await Get.delete<FFI>(tag: 'mobile-inline-$key');
+    setState(() {
+      _activeSessions.remove(key);
+      _sessionStatus[key] = 'Disconnected';
+    });
   }
 
   void _authorizePhone(String id) {
-    // This allows the mobile device to control the laptop
     setState(() {
       for (var device in _registeredDevices) {
-        if (device['id'] == id) {
+        if ((device['id'] ?? device['ip']) == id) {
           device['authorized'] = 'true';
         }
       }
     });
     showToast('Phone $id is now authorized to control this laptop.');
+  }
+}
+
+/// A self-contained widget that renders a single phone's live stream.
+/// It is a [StatefulWidget] so it can safely manage texture lifecycle
+/// in [initState]/[dispose] rather than inside build().
+class InlineStreamPanel extends StatefulWidget {
+  final String deviceKey;
+  final FFI ffi;
+
+  const InlineStreamPanel(
+      {super.key, required this.deviceKey, required this.ffi});
+
+  @override
+  State<InlineStreamPanel> createState() => _InlineStreamPanelState();
+}
+
+class _InlineStreamPanelState extends State<InlineStreamPanel> {
+  FFI get ffi => widget.ffi;
+  Size? _lastSize;
+  bool _callbackScheduled = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        ffi.inputModel.updateImageWidgetSize(size);
+
+        if (_lastSize != size) {
+          _lastSize = size;
+          if (!_callbackScheduled) {
+            _callbackScheduled = true;
+            SchedulerBinding.instance.addPostFrameCallback((_) {
+              _callbackScheduled = false;
+              if (mounted) {
+                ffi.canvasModel.fixedSize = size;
+                ffi.canvasModel.updateViewStyle();
+              }
+            });
+          }
+        }
+
+        return RawPointerMouseRegion(
+          inputModel: ffi.inputModel,
+          onEnter: (_) => ffi.inputModel.enterOrLeave(true),
+          onExit: (_) => ffi.inputModel.enterOrLeave(false),
+          onPointerDown: (_) {
+            // Route keyboard/mouse events to this specific session only
+            bind.setCurSessionId(sessionId: ffi.sessionId);
+          },
+          child: Obx(() {
+            // Reading pi.isSet reactive-ly avoids rendering a 0x0 texture before peer-info is ready.
+            if (ffi.ffiModel.pi.isSet.isFalse) {
+              return Container(
+                color: const Color(0xFF1a1a2e),
+                child: const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.blueAccent),
+                      SizedBox(height: 12),
+                      Text('Waiting for stream…',
+                          style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            final useTexture = ffi.imageModel.useTextureRender || ffi.ffiModel.pi.forceTextureRender;
+
+            // Using the shared display state tag matching ffi.id
+            final curDisplay = CurrentDisplayState.find(ffi.id).value;
+            // Reactively ensure that updateCurrentDisplay is called inside the Obx builder
+            // whenever the display state changes, exactly as is done in the main remote_page.dart!
+            ffi.textureModel.updateCurrentDisplay(curDisplay);
+
+            final textureId = ffi.textureModel.getTextureId(curDisplay);
+
+            // We build a hybrid widget: if texture render is disabled, or if software frames
+            // have already been received as a fallback, we display the software RawImage.
+            // Otherwise, we render using the Texture widget.
+            return AnimatedBuilder(
+              animation: ffi.imageModel,
+              builder: (context, child) {
+                final softwareImage = ffi.imageModel.image;
+
+                if (!useTexture || textureId.value == -1 || softwareImage != null) {
+                  if (softwareImage != null) {
+                    return SizedBox.expand(
+                      child: RawImage(
+                        image: softwareImage,
+                        fit: BoxFit.contain,
+                      ),
+                    );
+                  }
+                }
+
+                if (textureId.value == -1) {
+                  return Container(
+                    color: const Color(0xFF1a1a2e),
+                    child: const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.blueAccent),
+                          SizedBox(height: 12),
+                          Text('Starting stream…',
+                              style: TextStyle(color: Colors.white54, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+
+                // Texture is ready: fill the entire panel.
+                return SizedBox.expand(
+                  child: Texture(
+                    textureId: textureId.value,
+                    filterQuality: FilterQuality.low,
+                  ),
+                );
+              },
+            );
+          }),
+        );
+      },
+    );
   }
 }
