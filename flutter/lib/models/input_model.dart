@@ -19,6 +19,15 @@ import 'relative_mouse_model.dart';
 import '../common.dart';
 import '../consts.dart';
 
+final File _inputLog =
+    File('${Directory.systemTemp.path}\\input_debug.log');
+void _ilog(String msg) {
+  // Disabling synchronous I/O to prevent UI latency
+  // _inputLog.writeAsStringSync(
+  //     '${DateTime.now().millisecondsSinceEpoch} $msg\n',
+  //     mode: FileMode.append);
+}
+
 /// Mouse button enum.
 enum MouseButtons { left, right, wheel, back }
 
@@ -348,6 +357,8 @@ class InputModel {
   final _trackpadAdjustPeerLinux = 0.06;
   // This is an experience value.
   final _trackpadAdjustMacToWin = 2.50;
+  // Windows trackpad adjustment for Windows-to-Windows scrolling
+  final _trackpadAdjustWinToWin = 3.0;
   // Ignore directional locking for very small deltas on both axes (including
   // tiny single-axis movement) to avoid over-filtering near zero.
   static const double _trackpadAxisNoiseThreshold = 0.2;
@@ -943,13 +954,28 @@ class InputModel {
     await sendMouse('up', button);
   }
 
-  /// Send scroll event with scroll distance [y].
-  Future<void> scroll(int y) async {
+  /// Send scroll event with scroll distance [y] and [x].
+  Future<void> scroll(int y, {int x = 0}) async {
     if (isViewCamera) return;
+    if (peerPlatform == kPeerPlatformAndroid) {
+      final pos = lastMousePos;
+      final dx = -x * 40.0;
+      final dy = -y * 40.0;
+      if (dx != 0 || dy != 0) {
+        handlePointerEvent('touch', kMouseEventTypePanStart, pos);
+        handlePointerEvent('touch', kMouseEventTypePanUpdate, Offset(dx, dy));
+        handlePointerEvent('touch', kMouseEventTypePanEnd, pos + Offset(dx, dy));
+      }
+      return;
+    }
     await bind.sessionSendMouse(
         sessionId: sessionId,
-        msg: json
-            .encode(modify({'id': id, 'type': 'wheel', 'y': y.toString()})));
+        msg: json.encode(modify({
+          'id': id,
+          'type': 'wheel',
+          'x': x.toString(),
+          'y': y.toString()
+        })));
   }
 
   /// Reset key modifiers to false, including [shift], [ctrl], [alt] and [command].
@@ -1177,6 +1203,8 @@ class InputModel {
     var delta = e.panDelta * _trackpadSpeedInner;
     if (isMacOS && peerPlatform == kPeerPlatformWindows) {
       delta *= _trackpadAdjustMacToWin;
+    } else if (isWindows && peerPlatform == kPeerPlatformWindows) {
+      delta *= _trackpadAdjustWinToWin;
     }
     delta = _filterTrackpadDeltaAxis(delta);
     _trackpadLastDelta = delta;
@@ -1190,7 +1218,7 @@ class InputModel {
       _trackpadScrollUnsent -= Offset(x.toDouble(), y.toDouble());
     } else {
       if (x == 0 && y == 0) {
-        final thr = 0.1;
+        final thr = isWindows ? 0.05 : 0.1;
         if (delta.dx.abs() > delta.dy.abs()) {
           x = delta.dx > thr ? 1 : (delta.dx < -thr ? -1 : 0);
         } else {
@@ -1300,6 +1328,8 @@ class InputModel {
     double minFlingValue = 2.0 * _trackpadSpeedInner;
     if (isMacOS && peerPlatform == kPeerPlatformWindows) {
       minFlingValue *= _trackpadAdjustMacToWin;
+    } else if (isWindows && peerPlatform == kPeerPlatformWindows) {
+      minFlingValue *= _trackpadAdjustWinToWin;
     }
     if (_trackpadLastDelta.dx.abs() > minFlingValue ||
         _trackpadLastDelta.dy.abs() > minFlingValue) {
@@ -1333,7 +1363,7 @@ class InputModel {
   }
 
   void onPointDownImage(PointerDownEvent e) {
-    debugPrint("onPointDownImage ${e.kind}");
+    _ilog("onPointDownImage kind=${e.kind} isPhysicalMouse=${isPhysicalMouse.value} isViewOnly=$isViewOnly isViewCamera=$isViewCamera");
     _stopFling = true;
     if (isDesktop) _queryOtherWindowCoords = true;
     _remoteWindowCoords = [];
@@ -1445,46 +1475,88 @@ class InputModel {
     if (e is PointerScrollEvent) {
       final rawDx = e.scrollDelta.dx;
       final rawDy = e.scrollDelta.dy;
-      final dominantDelta = rawDx.abs() > rawDy.abs() ? rawDx.abs() : rawDy.abs();
+      if (peerPlatform == kPeerPlatformAndroid) {
+        final pos = e.position;
+        final dx = rawDx;
+        final dy = rawDy;
+        if (dx != 0 || dy != 0) {
+          handlePointerEvent('touch', kMouseEventTypePanStart, pos);
+          handlePointerEvent('touch', kMouseEventTypePanUpdate, Offset(dx, dy));
+          handlePointerEvent('touch', kMouseEventTypePanEnd, pos + Offset(dx, dy));
+        }
+        return;
+      }
+      _ilog("onPointerSignalImage: rawDx=$rawDx, rawDy=$rawDy");
+      final dominantDelta =
+          rawDx.abs() > rawDy.abs() ? rawDx.abs() : rawDy.abs();
       final isSmooth = dominantDelta < 1;
       final nowUs = DateTime.now().microsecondsSinceEpoch;
       final dtUs = _lastWheelTsUs == 0 ? 0 : nowUs - _lastWheelTsUs;
       _lastWheelTsUs = nowUs;
       int accel = 1;
-      if (!isSmooth &&
-          dtUs > 0 &&
-          dtUs <= _wheelAccelMediumThresholdUs &&
-          (isWindows || isLinux) &&
-          peerPlatform == kPeerPlatformMacOS) {
-        final velocity = dominantDelta / dtUs;
-        if (velocity >= _wheelBurstVelocityThreshold) {
-          if (dtUs < _wheelAccelFastThresholdUs) {
-            accel = 3;
-          } else {
-            accel = 2;
-          }
-        }
-      }
+
       var dx = rawDx.toInt();
       var dy = rawDy.toInt();
-      if (rawDx.abs() > rawDy.abs()) {
-        dy = 0;
+
+      if (peerPlatform == kPeerPlatformMacOS) {
+        if (!isSmooth &&
+            dtUs > 0 &&
+            dtUs <= _wheelAccelMediumThresholdUs &&
+            (isWindows || isLinux)) {
+          final velocity = dominantDelta / dtUs;
+          if (velocity >= _wheelBurstVelocityThreshold) {
+            if (dtUs < _wheelAccelFastThresholdUs) {
+              accel = 3;
+            } else {
+              accel = 2;
+            }
+          }
+        }
+        if (rawDx.abs() > rawDy.abs()) {
+          dy = 0;
+        } else {
+          dx = 0;
+        }
+        if (dx > 0) {
+          dx = -accel;
+        } else if (dx < 0) {
+          dx = accel;
+        }
+        if (dy > 0) {
+          dy = -accel;
+        } else if (dy < 0) {
+          dy = accel;
+        }
       } else {
-        dx = 0;
+        // Non-MacOS: preserve raw deltas for Windows/Linux peers which expect
+        // them (e.g. 120 per notch) or handle smooth scrolling deltas.
+        // Still apply single-axis lock for consistency.
+        // Apply Windows trackpad adjustment for scroll events
+        if (isWindows && peerPlatform == kPeerPlatformWindows) {
+          dx = (dx * _trackpadAdjustWinToWin).toInt();
+          dy = (dy * _trackpadAdjustWinToWin).toInt();
+        }
+        if (rawDx.abs() > rawDy.abs()) {
+          dy = 0;
+          // Invert to match RustDesk's expected wheel direction
+          dx = -dx;
+          if (dx == 0 && rawDx != 0) dx = rawDx > 0 ? -1 : 1;
+        } else {
+          dx = 0;
+          dy = -dy;
+          if (dy == 0 && rawDy != 0) dy = rawDy > 0 ? -1 : 1;
+        }
       }
-      if (dx > 0) {
-        dx = -accel;
-      } else if (dx < 0) {
-        dx = accel;
+
+      if (dx != 0 || dy != 0) {
+        bind.sessionSendMouse(
+            sessionId: sessionId,
+            msg: json.encode(modify({
+              'type': 'wheel',
+              'x': dx.toString(),
+              'y': dy.toString(),
+            })));
       }
-      if (dy > 0) {
-        dy = -accel;
-      } else if (dy < 0) {
-        dy = accel;
-      }
-      bind.sessionSendMouse(
-          sessionId: sessionId,
-          msg: '{"type": "wheel", "x": "$dx", "y": "$dy"}');
     }
   }
 
@@ -1600,10 +1672,14 @@ class InputModel {
     bool moveCanvas = true,
     bool edgeScroll = false,
   }) {
-    if (isViewCamera) return null;
+    if (isViewCamera) {
+      _ilog(" processEventToPeer: isViewCamera -> drop");
+      return null;
+    }
     double x = offset.dx;
     double y = max(0.0, offset.dy);
     if (_checkPeerControlProtected(x, y)) {
+      _ilog(" processEventToPeer: peer control protected -> drop");
       return null;
     }
 
@@ -1642,7 +1718,9 @@ class InputModel {
       moveCanvas: moveCanvas,
       edgeScroll: edgeScroll,
     );
+    _ilog(" processEventToPeer: pos=$pos, type=$type, x=$x, y=$y");
     if (pos == null) {
+      _ilog(" processEventToPeer: pos is NULL -> dropping event");
       return null;
     }
     if (type != '') {
@@ -1677,6 +1755,8 @@ class InputModel {
   }) {
     final evtToPeer = processEventToPeer(evt, offset,
         onExit: onExit, moveCanvas: moveCanvas, edgeScroll: edgeScroll);
+    _ilog(
+        " handleMouse: evtToPeer=${evtToPeer != null}, sessionId=$sessionId, msg=${evtToPeer != null ? json.encode(modify(evtToPeer)) : 'null'}");
     if (evtToPeer != null) {
       bind.sessionSendMouse(
           sessionId: sessionId, msg: json.encode(modify(evtToPeer)));
@@ -1699,6 +1779,17 @@ class InputModel {
     CanvasCoords canvas =
         CanvasCoords.fromCanvasModel(parent.target!.canvasModel);
     Rect? rect = ffiModel.rect;
+    _ilog(" handlePointerDevicePos: ffiModel.rect=$rect isDesktop=$isDesktop sessionId=${parent.target?.sessionId}");
+    if (rect == null) {
+      final curDisp = ffiModel.pi.getCurDisplays();
+      _ilog(" handlePointerDevicePos: rect null, curDisplays count=${curDisp.length}, curDisplay=${ffiModel.pi.currentDisplay}, allDisplays count=${ffiModel.pi.displays.length}");
+      if (curDisp.isNotEmpty) {
+        final d = curDisp.first;
+        rect = Rect.fromLTWH(
+            d.x.toDouble(), d.y.toDouble(), d.width.toDouble(), d.height.toDouble());
+        _ilog(" handlePointerDevicePos: fallback rect=$rect from display d.x=${d.x} d.y=${d.y} d.width=${d.width} d.height=${d.height}");
+      }
+    }
 
     if (isMove) {
       if (_remoteWindowCoords.isNotEmpty &&
@@ -1786,12 +1877,14 @@ class InputModel {
     int buttons = kPrimaryMouseButton,
   }) {
     if (rect == null) {
+      _ilog(" _handlePointerDevicePos: rect is NULL -> dropping");
       return null;
     }
 
     final nearThr = 3;
     var nearRight = (canvas.size.width - x) < nearThr;
     var nearBottom = (canvas.size.height - y) < nearThr;
+    _ilog(" _handlePointerDevicePos: BEFORE x=$x y=$y rect=$rect canvas.size=${canvas.size} canvas.x=${canvas.x} canvas.y=${canvas.y} canvas.scale=${canvas.scale} peerPlatform=${peerPlatform}");
     final imageWidth = rect.width * canvas.scale;
     final imageHeight = rect.height * canvas.scale;
     if (canvas.scrollStyle != ScrollStyle.scrollauto) {
@@ -1830,9 +1923,11 @@ class InputModel {
       y = pos.dy;
     }
 
-    return InputModel.getPointInRemoteRect(
+    final result = InputModel.getPointInRemoteRect(
         true, peerPlatform, kind, evtType, x, y, rect,
         buttons: buttons);
+    _ilog(" _handlePointerDevicePos: AFTER x=$x y=$y result=$result");
+    return result;
   }
 
   static Point<double>? getPointInRemoteRect(
@@ -1857,9 +1952,12 @@ class InputModel {
     if (isLocalDesktop) {
       if (kind == kPointerEventKindMouse) {
         if (evtX < minX || evtY < minY || evtX > maxX || evtY > maxY) {
+          _ilog(
+              " getPointInRemoteRect: OUT OF BOUNDS evtX=$evtX evtY=$evtY minX=$minX maxX=$maxX minY=$minY maxY=$maxY buttons=$buttons evtType=$evtType");
           // If left mouse up, no early return.
           if (!(buttons == kPrimaryMouseButton &&
               evtType == kMouseEventTypeUp)) {
+            _ilog(" getPointInRemoteRect -> dropping (out of bounds)");
             return null;
           }
         }

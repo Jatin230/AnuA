@@ -724,7 +724,14 @@ class FfiModel with ChangeNotifier {
 
   _handleUseTextureRender(
       Map<String, dynamic> evt, SessionID sessionId, String peerId) {
-    parent.target?.imageModel.setUseTextureRender(evt['v'] == 'Y');
+    final useTexture = evt['v'] == 'Y';
+    parent.target?.imageModel.setUseTextureRender(useTexture);
+    final curDisplay = _pi.currentDisplay;
+    final hasTexture = parent.target?.textureModel.getTextureId(curDisplay).value != -1;
+    final hasImage = parent.target?.imageModel.image != null;
+    if ((useTexture && hasTexture) || (!useTexture && hasImage)) {
+      return;
+    }
     waitForFirstImage.value = true;
     isRefreshing = true;
     showConnectedWaitingForImage(parent.target!.dialogManager, sessionId,
@@ -1374,8 +1381,16 @@ class FfiModel with ChangeNotifier {
       if (displays.isNotEmpty) {
         _reconnects = 1;
         _offlineReconnectStartTime = null;
-        waitForFirstImage.value = true;
+        if (!_pi.isSet.value) {
+          waitForFirstImage.value = true;
+        }
         isRefreshing = false;
+        // Request a fresh frame now that displays/resolutions are known.
+        // This ensures the screen updates and the "Waiting for image" state
+        // gets dismissed when the frame is processed.
+        Future.delayed(Duration.zero, () async {
+          await sessionRefreshVideo(sessionId, _pi);
+        });
       }
       Map<String, dynamic> features = json.decode(evt['features']);
       _pi.features.privacyMode = features['privacy_mode'] == true;
@@ -1875,6 +1890,46 @@ class ImageModel with ChangeNotifier {
     _webDecodingRgba = false;
   }
 
+  // --- Zero-latency frame pipeline ---
+  // Rust's buffer is released immediately after copy. While decoding the current
+  // frame, any newly-arrived frames are stored here (one slot per display).
+  // When decode finishes, only the LATEST pending frame is decoded — all
+  // intermediate frames are dropped. This prevents the 8-9 second queue buildup
+  // that occurs when Rust produces frames faster than Dart can decode them.
+  final Map<int, Uint8List?> _pendingRgba = {};
+  final Map<int, bool> _decodingDisplay = {};
+
+  /// Queue an rgba frame for display without blocking the caller.
+  /// nextRgba() must already have been called by the caller so Rust can
+  /// immediately start producing the next frame in parallel with our decode.
+  void queueRgba(int display, Uint8List rgba) {
+    _pendingRgba[display] = rgba; // Replace any stale pending frame
+    _drainRgbaQueue(display);
+  }
+
+  void _drainRgbaQueue(int display) {
+    if (_decodingDisplay[display] == true) return; // decode in progress; it will drain on completion
+    final rgba = _pendingRgba[display];
+    if (rgba == null) return;
+    _pendingRgba[display] = null;
+    _decodingDisplay[display] = true;
+    // 5-second safety timeout: if decodeAndUpdate ever hangs (e.g. a blocked FFI
+    // call during first-frame init), the pipeline self-heals rather than silently
+    // dropping all future frames forever.
+    decodeAndUpdate(display, rgba)
+        .timeout(const Duration(seconds: 5), onTimeout: () {
+      debugPrint(
+          '[queueRgba] decode timeout for display $display — unsticking pipeline');
+    }).then((_) {
+      _decodingDisplay[display] = false;
+      _drainRgbaQueue(display); // decode any frame that arrived while we were busy
+    }).catchError((e) {
+      _decodingDisplay[display] = false;
+      debugPrint('queueRgba decode error: $e');
+    });
+  }
+
+  // Kept for callers that still use it (e.g. web path).
   onRgba(int display, Uint8List rgba) async {
     try {
       await decodeAndUpdate(display, rgba);
@@ -1887,10 +1942,15 @@ class ImageModel with ChangeNotifier {
   decodeAndUpdate(int display, Uint8List rgba) async {
     final pid = parent.target?.id;
     final rect = parent.target?.ffiModel.pi.getDisplayRect(display);
+    // Guard: if peer info hasn't arrived yet the rect is null / zero-sized.
+    // Calling decodeImageFromPixels(rgba, 0, 0) can stall indefinitely on some
+    // platforms, which permanently locks _decodingDisplay and silently drops
+    // every subsequent frame. Skip and let the pipeline retry the next frame.
+    if (rect == null || rect.width <= 0 || rect.height <= 0) return;
     final image = await img.decodeImageFromPixels(
       rgba,
-      rect?.width.toInt() ?? 0,
-      rect?.height.toInt() ?? 0,
+      rect.width.toInt(),
+      rect.height.toInt(),
       isWeb | isWindows | isLinux
           ? ui.PixelFormat.rgba8888
           : ui.PixelFormat.bgra8888,
@@ -3860,8 +3920,13 @@ class FFI {
           }
           final rgba = platformFFI.getRgba(sessionId, display, sz);
           if (rgba != null) {
+            // Release Rust's shared buffer IMMEDIATELY after copy so the
+            // encoder can start capturing the next frame in parallel with
+            // our decode — this is the critical fix for the 8-9s latency.
+            platformFFI.nextRgba(sessionId, display);
             onEvent2UIRgba();
-            await imageModel.onRgba(display, rgba);
+            // Non-blocking: latest-frame-wins queue prevents buildup.
+            imageModel.queueRgba(display, rgba);
           } else {
             platformFFI.nextRgba(sessionId, display);
           }

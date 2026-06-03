@@ -3,11 +3,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/common/widgets/remote_input.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
+import 'package:flutter_hbb/models/input_model.dart';
 import 'package:get/get.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -229,32 +231,32 @@ class _MobileControlPageState extends State<MobileControlPage> {
   Widget _buildSetupCard() {
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(10),
         child: Column(
           children: [
-            const Icon(Icons.qr_code_scanner, size: 40, color: MyTheme.accent),
-            const SizedBox(height: 8),
+            const Icon(Icons.qr_code_scanner, size: 28, color: MyTheme.accent),
+            const SizedBox(height: 6),
             const Text('Pair New Device', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             if (_loading) const CircularProgressIndicator(),
             if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
             if (_connectionUrl != null) ...[
               QrImageView(
                 data: _connectionUrl!,
                 version: QrVersions.auto,
-                size: 180,
+                size: 130,
                 backgroundColor: Colors.white,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               OutlinedButton.icon(
                 onPressed: _generateConnectionUrl,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Refresh IP'),
               ),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             TextField(
               controller: _manualIpController,
               decoration: const InputDecoration(
@@ -264,7 +266,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
               ),
               onSubmitted: _connectManualIp,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -272,9 +274,9 @@ class _MobileControlPageState extends State<MobileControlPage> {
                 child: const Text('Connect Manual IP'),
               ),
             ),
-            const SizedBox(height: 12),
-            const Divider(),
             const SizedBox(height: 8),
+            const Divider(),
+            const SizedBox(height: 6),
             Row(
               children: [
                 Icon(Icons.circle, size: 10, color: _serverReady ? Colors.green : Colors.orange),
@@ -341,18 +343,20 @@ class _MobileControlPageState extends State<MobileControlPage> {
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final crossAxisCount = constraints.maxWidth > 1200
-                      ? 3
-                      : constraints.maxWidth > 800
-                          ? 2
-                          : 1;
+                  final crossAxisCount = constraints.maxWidth > 1000
+                      ? 4
+                      : constraints.maxWidth > 750
+                          ? 3
+                          : constraints.maxWidth > 500
+                              ? 2
+                              : 1;
                   return GridView.builder(
                     itemCount: _registeredDevices.length,
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: crossAxisCount,
                       crossAxisSpacing: 12,
                       mainAxisSpacing: 12,
-                      childAspectRatio: 0.75, // Better for portrait phones
+                      childAspectRatio: 0.55, // Better for portrait phones (narrower & smaller)
                     ),
                     itemBuilder: (context, index) =>
                         _buildDevicePanel(_registeredDevices[index]),
@@ -496,9 +500,10 @@ class _MobileControlPageState extends State<MobileControlPage> {
     try {
       // Use a unique SessionID per panel so sessions are fully isolated
       final ffi = FFI(null);
+      final connectionId = 'direct-tcp:${ip}_port_21118';
+      ffi.id = connectionId;
       Get.put<FFI>(ffi, tag: 'mobile-inline-$key', permanent: false);
 
-      final connectionId = 'direct-tcp:${ip}_port_21118';
       initSharedStates(connectionId);
 
       // Mark as Connected when the first decoded frame arrives
@@ -569,6 +574,145 @@ class _InlineStreamPanelState extends State<InlineStreamPanel> {
   FFI get ffi => widget.ffi;
   Size? _lastSize;
   bool _callbackScheduled = false;
+  late final FocusNode _focusNode;
+
+  // Touch gesture state
+  bool _panActive = false;
+  double _scrollAccumY = 0.0;
+  double _scrollAccumX = 0.0;
+  Offset _lastFocalPoint = Offset.zero;
+  Offset _doubleTapDownPos = Offset.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode();
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  Rect? getRemoteRect() {
+    var rect = ffi.ffiModel.rect;
+    if (rect == null) {
+      final curDisp = ffi.ffiModel.pi.getCurDisplays();
+      if (curDisp.isNotEmpty) {
+        final d = curDisp.first;
+        rect = Rect.fromLTWH(
+            d.x.toDouble(), d.y.toDouble(), d.width.toDouble(), d.height.toDouble());
+      }
+    }
+    return rect;
+  }
+
+  Offset _clampToImage(Offset localPos) {
+    final rect = getRemoteRect();
+    if (rect == null || rect.width <= 0 || rect.height <= 0) {
+      return localPos;
+    }
+    final canvas = ffi.canvasModel;
+    final scale = canvas.scale;
+    final adjust = canvas.getAdjustY();
+    final imageWidth = rect.width * scale;
+    final imageHeight = rect.height * scale;
+
+    final left = canvas.x;
+    final right = canvas.x + imageWidth;
+    final top = canvas.y + adjust;
+    final bottom = canvas.y + adjust + imageHeight;
+
+    final clampedX = localPos.dx.clamp(left, right);
+    final clampedY = localPos.dy.clamp(top, bottom);
+    return Offset(clampedX, clampedY);
+  }
+
+  bool _isTouch(PointerDeviceKind? kind) {
+    return kind == PointerDeviceKind.touch || kind == PointerDeviceKind.stylus;
+  }
+
+  void _onTapUp(TapUpDetails d) async {
+    if (!_isTouch(d.kind)) return;
+    final clamped = _clampToImage(d.localPosition);
+    final isMoved = await ffi.cursorModel.move(clamped.dx, clamped.dy);
+    if (isMoved) {
+      await ffi.inputModel.tapDown(MouseButtons.left);
+      await ffi.inputModel.tapUp(MouseButtons.left);
+    }
+  }
+
+  void _onDoubleTapDown(TapDownDetails d) {
+    if (!_isTouch(d.kind)) return;
+    _doubleTapDownPos = _clampToImage(d.localPosition);
+  }
+
+  void _onDoubleTap() async {
+    final isMoved = await ffi.cursorModel.move(_doubleTapDownPos.dx, _doubleTapDownPos.dy);
+    if (isMoved) {
+      await ffi.inputModel.tap(MouseButtons.left);
+      await ffi.inputModel.tap(MouseButtons.left);
+    }
+  }
+
+  void _onLongPressStart(LongPressStartDetails d) async {
+    if (ffi.inputModel.isPhysicalMouse.value) return;
+    final clamped = _clampToImage(d.localPosition);
+    final isMoved = await ffi.cursorModel.move(clamped.dx, clamped.dy);
+    if (isMoved) {
+      await ffi.inputModel.tap(MouseButtons.right);
+    }
+  }
+
+  void _onScaleStart(ScaleStartDetails d) async {
+    if (ffi.inputModel.isPhysicalMouse.value) return;
+    _lastFocalPoint = d.localFocalPoint;
+    if (d.pointerCount == 1) {
+      _panActive = true;
+      final clamped = _clampToImage(d.localFocalPoint);
+      await ffi.cursorModel.move(clamped.dx, clamped.dy);
+      if (!ffi.inputModel.relativeMouseMode.value) {
+        await ffi.inputModel.sendMouse('down', MouseButtons.left);
+      }
+    }
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails d) async {
+    if (ffi.inputModel.isPhysicalMouse.value) return;
+    if (d.pointerCount == 1) {
+      final clamped = _clampToImage(d.localFocalPoint);
+      if (ffi.inputModel.relativeMouseMode.value) {
+        final delta = d.localFocalPoint - _lastFocalPoint;
+        await ffi.inputModel.sendMobileRelativeMouseMove(delta.dx, delta.dy);
+      } else {
+        final delta = d.localFocalPoint - _lastFocalPoint;
+        await ffi.cursorModel.updatePan(delta, clamped, true);
+      }
+      _lastFocalPoint = d.localFocalPoint;
+    } else if (d.pointerCount == 2) {
+      final delta = d.localFocalPoint - _lastFocalPoint;
+      _lastFocalPoint = d.localFocalPoint;
+
+      _scrollAccumY += delta.dy / 4.0;
+      _scrollAccumX += delta.dx / 4.0;
+
+      if (_scrollAccumY.abs() >= 1.0 || _scrollAccumX.abs() >= 1.0) {
+        ffi.inputModel.scroll(_scrollAccumY.toInt(), x: _scrollAccumX.toInt());
+        _scrollAccumY -= _scrollAccumY.truncateToDouble();
+        _scrollAccumX -= _scrollAccumX.truncateToDouble();
+      }
+    }
+  }
+
+  void _onScaleEnd(ScaleEndDetails d) async {
+    if (_panActive) {
+      _panActive = false;
+      if (!ffi.inputModel.relativeMouseMode.value) {
+        await ffi.inputModel.sendMouse('up', MouseButtons.left);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -591,64 +735,38 @@ class _InlineStreamPanelState extends State<InlineStreamPanel> {
           }
         }
 
-        return RawPointerMouseRegion(
-          inputModel: ffi.inputModel,
-          onEnter: (_) => ffi.inputModel.enterOrLeave(true),
-          onExit: (_) => ffi.inputModel.enterOrLeave(false),
-          onPointerDown: (_) {
-            // Route keyboard/mouse events to this specific session only
-            bind.setCurSessionId(sessionId: ffi.sessionId);
-          },
-          child: Obx(() {
-            // Reading pi.isSet reactive-ly avoids rendering a 0x0 texture before peer-info is ready.
-            if (ffi.ffiModel.pi.isSet.isFalse) {
-              return Container(
-                color: const Color(0xFF1a1a2e),
-                child: const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.blueAccent),
-                      SizedBox(height: 12),
-                      Text('Waiting for stream…',
-                          style: TextStyle(color: Colors.white54, fontSize: 12)),
-                    ],
-                  ),
-                ),
-              );
-            }
-
-            final useTexture = ffi.imageModel.useTextureRender || ffi.ffiModel.pi.forceTextureRender;
-
-            // Using the shared display state tag matching ffi.id
-            final curDisplay = CurrentDisplayState.find(ffi.id).value;
-            // Reactively ensure that updateCurrentDisplay is called inside the Obx builder
-            // whenever the display state changes, exactly as is done in the main remote_page.dart!
-            ffi.textureModel.updateCurrentDisplay(curDisplay);
-
-            final textureId = ffi.textureModel.getTextureId(curDisplay);
-
-            // We build a hybrid widget: if texture render is disabled, or if software frames
-            // have already been received as a fallback, we display the software RawImage.
-            // Otherwise, we render using the Texture widget.
-            return AnimatedBuilder(
-              animation: ffi.imageModel,
-              builder: (context, child) {
-                final softwareImage = ffi.imageModel.image;
-
-                if (!useTexture || textureId.value == -1 || softwareImage != null) {
-                  if (softwareImage != null) {
-                    return SizedBox.expand(
-                      child: RawImage(
-                        image: softwareImage,
-                        fit: BoxFit.contain,
-                      ),
-                    );
-                  }
+        return Focus(
+          focusNode: _focusNode,
+          onKeyEvent: (node, event) => ffi.inputModel.handleKeyEvent(event),
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTapUp: _onTapUp,
+            onDoubleTapDown: _onDoubleTapDown,
+            onDoubleTap: _onDoubleTap,
+            onLongPressStart: _onLongPressStart,
+            onScaleStart: _onScaleStart,
+            onScaleUpdate: _onScaleUpdate,
+            onScaleEnd: _onScaleEnd,
+            child: RawPointerMouseRegion(
+              isInline: true,
+              inputModel: ffi.inputModel,
+              onEnter: (_) {
+                ffi.inputModel.enterOrLeave(true);
+                _focusNode.requestFocus();
+              },
+              onExit: (_) => ffi.inputModel.enterOrLeave(false),
+              onPointerDown: (evt) {
+                if (evt.kind == PointerDeviceKind.mouse) {
+                  ffi.inputModel.isPhysicalMouse.value = true;
+                } else {
+                  ffi.inputModel.isPhysicalMouse.value = false;
                 }
-
-                if (textureId.value == -1) {
+                bind.setCurSessionId(sessionId: ffi.sessionId);
+                _focusNode.requestFocus();
+              },
+              child: Obx(() {
+                // Reading pi.isSet reactive-ly avoids rendering a 0x0 texture before peer-info is ready.
+                if (ffi.ffiModel.pi.isSet.isFalse) {
                   return Container(
                     color: const Color(0xFF1a1a2e),
                     child: const Center(
@@ -658,7 +776,7 @@ class _InlineStreamPanelState extends State<InlineStreamPanel> {
                           CircularProgressIndicator(
                               strokeWidth: 2, color: Colors.blueAccent),
                           SizedBox(height: 12),
-                          Text('Starting stream…',
+                          Text('Waiting for stream…',
                               style: TextStyle(color: Colors.white54, fontSize: 12)),
                         ],
                       ),
@@ -666,16 +784,65 @@ class _InlineStreamPanelState extends State<InlineStreamPanel> {
                   );
                 }
 
-                // Texture is ready: fill the entire panel.
-                return SizedBox.expand(
-                  child: Texture(
-                    textureId: textureId.value,
-                    filterQuality: FilterQuality.low,
-                  ),
+                final useTexture = ffi.imageModel.useTextureRender || ffi.ffiModel.pi.forceTextureRender;
+
+                // Using the shared display state tag matching ffi.id
+                final curDisplay = CurrentDisplayState.find(ffi.id).value;
+                // Reactively ensure that updateCurrentDisplay is called inside the Obx builder
+                // whenever the display state changes, exactly as is done in the main remote_page.dart!
+                ffi.textureModel.updateCurrentDisplay(curDisplay);
+
+                final textureId = ffi.textureModel.getTextureId(curDisplay);
+
+                // We build a hybrid widget: if texture render is disabled, or if software frames
+                // have already been received as a fallback, we display the software RawImage.
+                // Otherwise, we render using the Texture widget.
+                return AnimatedBuilder(
+                  animation: ffi.imageModel,
+                  builder: (context, child) {
+                    final softwareImage = ffi.imageModel.image;
+
+                    if (!useTexture || textureId.value == -1 || softwareImage != null) {
+                      if (softwareImage != null) {
+                        return SizedBox.expand(
+                          child: RawImage(
+                            image: softwareImage,
+                            fit: BoxFit.contain,
+                          ),
+                        );
+                      }
+                    }
+
+                    if (textureId.value == -1) {
+                      return Container(
+                        color: const Color(0xFF1a1a2e),
+                        child: const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.blueAccent),
+                              SizedBox(height: 12),
+                              Text('Starting stream…',
+                                  style: TextStyle(color: Colors.white54, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+
+                    // Texture is ready: fill the entire panel.
+                    return SizedBox.expand(
+                      child: Texture(
+                        textureId: textureId.value,
+                        filterQuality: FilterQuality.low,
+                      ),
+                    );
+                  },
                 );
-              },
-            );
-          }),
+              }),
+            ),
+          ),
         );
       },
     );

@@ -90,7 +90,8 @@ class _RawTouchGestureDetectorRegionState
   Offset _cacheLongPressPosition = Offset(0, 0);
   // Timestamp of the last long press event.
   int _cacheLongPressPositionTs = 0;
-  double _mouseScrollIntegral = 0; // mouse scroll speed controller
+  double _mouseScrollIntegral = 0; // vertical mouse scroll speed controller
+  double _mouseScrollIntegralX = 0; // horizontal mouse scroll speed controller
   double _scale = 1;
 
   // Workaround tap down event when two fingers are used to scale(mobile)
@@ -483,6 +484,19 @@ class _RawTouchGestureDetectorRegionState
                 PointerEventToRust(kPointerEventKindTouch, 'scale', scale)
                     .toJson()));
       }
+
+      // Handle two-finger scroll on desktop touch screen
+      if (scale.abs() < 10) {
+        _mouseScrollIntegral += d.focalPointDelta.dy / 4;
+        _mouseScrollIntegralX += d.focalPointDelta.dx / 4;
+        if (_mouseScrollIntegral.abs() >= 1 ||
+            _mouseScrollIntegralX.abs() >= 1) {
+          inputModel.scroll(_mouseScrollIntegral.toInt(),
+              x: _mouseScrollIntegralX.toInt());
+          _mouseScrollIntegral -= _mouseScrollIntegral.truncateToDouble();
+          _mouseScrollIntegralX -= _mouseScrollIntegralX.truncateToDouble();
+        }
+      }
     } else {
       // mobile
       ffi.canvasModel.updateScale(d.scale / _scale, d.focalPoint);
@@ -514,16 +528,15 @@ class _RawTouchGestureDetectorRegionState
   }
 
   get onHoldDragCancel => null;
-  get onThreeFingerVerticalDragUpdate => ffi.ffiModel.isPeerAndroid
-      ? null
-      : (d) {
+  get onThreeFingerVerticalDragUpdate => (d) {
           _mouseScrollIntegral += d.delta.dy / 4;
-          if (_mouseScrollIntegral > 1) {
-            inputModel.scroll(1);
-            _mouseScrollIntegral = 0;
-          } else if (_mouseScrollIntegral < -1) {
-            inputModel.scroll(-1);
-            _mouseScrollIntegral = 0;
+          _mouseScrollIntegralX += d.delta.dx / 4;
+          if (_mouseScrollIntegral.abs() >= 1 ||
+              _mouseScrollIntegralX.abs() >= 1) {
+            inputModel.scroll(_mouseScrollIntegral.toInt(),
+                x: _mouseScrollIntegralX.toInt());
+            _mouseScrollIntegral -= _mouseScrollIntegral.truncateToDouble();
+            _mouseScrollIntegralX -= _mouseScrollIntegralX.truncateToDouble();
           }
         };
 
@@ -596,6 +609,7 @@ class RawPointerMouseRegion extends StatelessWidget {
   final PointerExitEventListener? onExit;
   final PointerDownEventListener? onPointerDown;
   final PointerUpEventListener? onPointerUp;
+  final bool isInline;
 
   RawPointerMouseRegion({
     this.onEnter,
@@ -603,24 +617,62 @@ class RawPointerMouseRegion extends StatelessWidget {
     this.cursor,
     this.onPointerDown,
     this.onPointerUp,
+    this.isInline = false,
     required this.inputModel,
     required this.child,
   });
 
   @override
   Widget build(BuildContext context) {
+    PointerEvent _transformEvent(PointerEvent e) {
+      if (!isInline) return e;
+      final localPos = e.localPosition;
+      final adjustedPos = Offset(
+        localPos.dx + CanvasModel.leftToEdge,
+        localPos.dy + CanvasModel.topToEdge,
+      );
+      if (e is PointerDownEvent) {
+        return e.copyWith(position: adjustedPos);
+      } else if (e is PointerUpEvent) {
+        return e.copyWith(position: adjustedPos);
+      } else if (e is PointerMoveEvent) {
+        return e.copyWith(position: adjustedPos);
+      } else if (e is PointerHoverEvent) {
+        return e.copyWith(position: adjustedPos);
+      }
+      return e;
+    }
+
+    PointerSignalEvent _transformSignalEvent(PointerSignalEvent e) {
+      if (!isInline) return e;
+      if (e is PointerScrollEvent) {
+        final localPos = e.localPosition;
+        final adjustedPos = Offset(
+          localPos.dx + CanvasModel.leftToEdge,
+          localPos.dy + CanvasModel.topToEdge,
+        );
+        return e.copyWith(position: adjustedPos);
+      }
+      return e;
+    }
+
     return Listener(
-      onPointerHover: inputModel.onPointHoverImage,
+      onPointerHover: (evt) => inputModel.onPointHoverImage(
+          evt is PointerHoverEvent && isInline ? _transformEvent(evt) as PointerHoverEvent : evt),
       onPointerDown: (evt) {
-        onPointerDown?.call(evt);
-        inputModel.onPointDownImage(evt);
+        final transformed = evt is PointerDownEvent && isInline ? _transformEvent(evt) as PointerDownEvent : evt;
+        onPointerDown?.call(transformed);
+        inputModel.onPointDownImage(transformed);
       },
       onPointerUp: (evt) {
-        onPointerUp?.call(evt);
-        inputModel.onPointUpImage(evt);
+        final transformed = evt is PointerUpEvent && isInline ? _transformEvent(evt) as PointerUpEvent : evt;
+        onPointerUp?.call(transformed);
+        inputModel.onPointUpImage(transformed);
       },
-      onPointerMove: inputModel.onPointMoveImage,
-      onPointerSignal: inputModel.onPointerSignalImage,
+      onPointerMove: (evt) => inputModel.onPointMoveImage(
+          evt is PointerMoveEvent && isInline ? _transformEvent(evt) as PointerMoveEvent : evt),
+      onPointerSignal: (evt) => inputModel.onPointerSignalImage(
+          evt is PointerSignalEvent && isInline ? _transformSignalEvent(evt) : evt),
       onPointerPanZoomStart: inputModel.onPointerPanZoomStart,
       onPointerPanZoomUpdate: inputModel.onPointerPanZoomUpdate,
       onPointerPanZoomEnd: inputModel.onPointerPanZoomEnd,
