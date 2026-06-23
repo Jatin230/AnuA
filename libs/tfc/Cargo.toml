@@ -1,0 +1,12 @@
+[package]
+name = "tfc"
+version = "0.7.0"
+edition = "2021"
+description = "Stub for The-Fat-Controller (desktop-only, not compiled on Android)"
+license = "MIT"
+
+# This is a stub. tfc is only used by enigo which is only compiled on desktop
+# (cfg not android/ios). Since Android builds don't compile enigo, this stub
+# satisfies the dependency resolver without requiring network access.
+
+[dependencies]

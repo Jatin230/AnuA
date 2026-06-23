@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,6 +13,7 @@ import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/input_model.dart';
 import 'package:get/get.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:flutter_hbb/debug_agent_log.dart';
 
 class MobileControlPage extends StatefulWidget {
   const MobileControlPage({super.key});
@@ -23,6 +25,10 @@ class MobileControlPage extends StatefulWidget {
 
 class _MobileControlPageState extends State<MobileControlPage> {
   String? _connectionUrl;
+  String? _nostrUri;
+  String? _nostrError;
+  bool _nostrLoading = false;
+  int _qrTab = 0; // 0 = LAN, 1 = Nostr
   String? _error;
   bool _loading = false;
   final TextEditingController _manualIpController = TextEditingController();
@@ -33,17 +39,73 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
   bool _serverReady = false;
   bool _rustAlive = false;
+  String? _listenerError;
   List<String> _allLocalIps = [];
+  String? _selectedLanIp;
+  Timer? _listenerProbe;
+  final _overlayKeyState = OverlayKeyState();
 
   @override
   void initState() {
     super.initState();
-    _generateConnectionUrl();
     _setupEventListener();
+    unawaited(_ensureDirectServerEnabled());
+    _generateConnectionUrl();
+    _startListenerProbe();
+  }
+
+  /// The Rust backend may emit direct_server_status before this page opens.
+  /// Probe localhost:21118 so we don't miss the ready state.
+  void _startListenerProbe() {
+    _listenerProbe?.cancel();
+    _probeDirectListener();
+    _listenerProbe = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_serverReady) {
+        _listenerProbe?.cancel();
+        return;
+      }
+      _probeDirectListener();
+    });
+  }
+
+  Future<void> _probeDirectListener() async {
+    const port = 21118;
+    for (final host in ['127.0.0.1', if (_selectedLanIp != null) _selectedLanIp!]) {
+      try {
+        final socket = await Socket.connect(
+          host,
+          port,
+          timeout: const Duration(milliseconds: 800),
+        );
+        await socket.close();
+        if (!mounted || _serverReady) return;
+        setState(() {
+          _serverReady = true;
+          _listenerError = null;
+        });
+        return;
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _ensureDirectServerEnabled() async {
+    try {
+      if (bind.mainGetOptionSync(key: 'direct-server') != 'Y') {
+        await bind.mainSetOption(key: 'direct-server', value: 'Y');
+      }
+      if (bind.mainGetOptionSync(key: 'stop-service') == 'Y') {
+        await bind.mainSetOption(key: 'stop-service', value: '');
+      }
+    } catch (e) {
+      debugPrint('Failed to ensure direct server options: $e');
+    }
   }
 
   @override
   void dispose() {
+    _nostrWatchdog?.cancel();
+    _listenerProbe?.cancel();
+    _imageTimeout?.cancel();
     _manualIpController.dispose();
     for (final ffi in _activeSessions.values) {
       ffi.close();
@@ -55,8 +117,19 @@ class _MobileControlPageState extends State<MobileControlPage> {
   void _setupEventListener() {
     platformFFI.registerEventHandler(
         'direct_server_status', 'mobile_control_page_status', (evt) async {
-      if (evt['data'] == 'started' && mounted) {
-        setState(() => _serverReady = true);
+      final data = evt['data']?.toString() ?? '';
+      if (!mounted) return;
+      if (data == 'started') {
+        setState(() {
+          _serverReady = true;
+          _listenerError = null;
+        });
+        _listenerProbe?.cancel();
+      } else if (data.startsWith('error:')) {
+        setState(() {
+          _serverReady = false;
+          _listenerError = data.substring(6);
+        });
       }
     });
 
@@ -83,14 +156,40 @@ class _MobileControlPageState extends State<MobileControlPage> {
         debugPrint('Failed to parse registration: $e');
       }
     });
+
+    // Nostr WebRTC events
+    platformFFI.registerEventHandler(
+        'on_nostr_webrtc_ready', 'mobile_control_page_nostr', (evt) async {
+      if (!mounted) return;
+      _nostrWatchdog?.cancel();
+      setState(() {
+        _nostrUri = _compactNostrQrUri(evt['uri'] ?? '');
+        _nostrError = null;
+        _nostrLoading = false;
+      });
+    });
+
+    platformFFI.registerEventHandler(
+        'on_nostr_webrtc_error', 'mobile_control_page_nostr_err', (evt) async {
+      if (!mounted) return;
+      _nostrWatchdog?.cancel();
+      setState(() {
+        _nostrError = evt['error'] ?? 'Unknown error';
+        _nostrLoading = false;
+      });
+    });
   }
 
   void _showDeviceActionDialog(Map<String, String> device) {
+    final hasPassword = (device['temp_password'] ?? '').isNotEmpty;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('New Mobile Device: ${device['name']}'),
-        content: const Text('A mobile device has just scanned your QR code. What would you like to do?'),
+        content: Text(hasPassword
+            ? 'A mobile device has just scanned your QR code. What would you like to do?'
+            : 'A mobile device has just scanned your QR code.\n\n'
+              'Tip: Make sure the Anuvadini app is running on the phone before tapping "Control Phone".'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -132,12 +231,19 @@ class _MobileControlPageState extends State<MobileControlPage> {
             name.contains('vbox') ||
             name.contains('vmware') ||
             name.contains('vethernet') ||
+            name.contains('hyper-v') ||
+            name.contains('hyperv') ||
+            name.contains('docker') ||
+            name.contains('npcap') ||
+            name.contains('bluetooth') ||
+            name.contains('tun') ||
+            name.contains('tap') ||
             name.contains('host-only') ||
             name.contains('loopback')) {
           continue;
         }
         for (var addr in interface.addresses) {
-          if (!addr.isLoopback) {
+          if (!addr.isLoopback && _isUsableLanIp(addr.address)) {
             _allLocalIps.add(addr.address);
           }
         }
@@ -146,7 +252,9 @@ class _MobileControlPageState extends State<MobileControlPage> {
       if (_allLocalIps.isEmpty) {
         for (var interface in interfaces) {
           for (var addr in interface.addresses) {
-            if (!addr.isLoopback) _allLocalIps.add(addr.address);
+            if (!addr.isLoopback && _isUsableLanIp(addr.address)) {
+              _allLocalIps.add(addr.address);
+            }
           }
         }
       }
@@ -159,14 +267,23 @@ class _MobileControlPageState extends State<MobileControlPage> {
         return;
       }
 
-      final localIp = _allLocalIps.firstWhere((ip) => ip.startsWith('192.168.'),
-          orElse: () => _allLocalIps.firstWhere((ip) => ip.startsWith('10.'),
-              orElse: () => _allLocalIps.firstWhere((ip) => ip.startsWith('172.'),
-                  orElse: () => _allLocalIps.first)));
+      // Prefer the Rust-detected default-route IP over interface enumeration.
+      final rustIp = bind.mainGetOptionSync(key: 'local-ip-addr');
+      if (rustIp.isNotEmpty &&
+          _isUsableLanIp(rustIp) &&
+          !_allLocalIps.contains(rustIp)) {
+        _allLocalIps.insert(0, rustIp);
+      }
+
+      final localIp = _selectedLanIp ??
+          (rustIp.isNotEmpty && _isUsableLanIp(rustIp) && _allLocalIps.contains(rustIp)
+              ? rustIp
+              : _pickBestLocalIp(_allLocalIps));
 
       final url = 'anuvadini://direct-tcp:${localIp}_port_21118';
       setState(() {
         _connectionUrl = url;
+        _selectedLanIp = localIp;
         _loading = false;
       });
     } catch (e) {
@@ -175,10 +292,107 @@ class _MobileControlPageState extends State<MobileControlPage> {
         _loading = false;
       });
     }
+    // Nostr QR is generated lazily when the user first taps the Nostr chip.
+  }
+
+  /// Skip virtual/emulator/link-local ranges that phones cannot reach.
+  bool _isUsableLanIp(String ip) {
+    if (ip.startsWith('169.254.')) return false;
+    // Hyper-V / Genymotion / some emulators
+    if (ip.startsWith('192.168.199.')) return false;
+    return true;
+  }
+
+  String _pickBestLocalIp(List<String> ips) {
+    int score(String ip) {
+      if (ip.startsWith('192.168.1.')) return 0;
+      if (ip.startsWith('192.168.0.')) return 1;
+      if (ip.startsWith('192.168.')) return 2;
+      if (ip.startsWith('10.')) return 3;
+      if (ip.startsWith('172.')) return 4;
+      return 5;
+    }
+
+    ips.sort((a, b) => score(a).compareTo(score(b)));
+    return ips.first;
+  }
+
+  String localIpFromUrl(String url) {
+    final hostPart = url.replaceFirst('anuvadini://direct-tcp:', '');
+    final match = RegExp(r'^(.+)_port_\d+$').firstMatch(hostPart);
+    return match?.group(1) ?? hostPart;
+  }
+
+  /// WebRTC SDPs must not go in the QR — too dense to scan. Relay fetch only.
+  String _compactNostrQrUri(String uri) {
+    final parsed = Uri.tryParse(uri);
+    if (parsed == null || !parsed.queryParameters.containsKey('offer')) {
+      return uri;
+    }
+    return 'nostr-webrtc://${parsed.host}#${parsed.fragment}';
+  }
+
+  Timer? _nostrWatchdog;
+  // Whether the user has ever explicitly requested Nostr QR generation.
+  bool _nostrRequested = false;
+
+  /// Called when the user taps the Nostr chip to switch to the Nostr tab.
+  void _onNostrTabSelected() {
+    setState(() => _qrTab = 1);
+    // Start generation on first open, or retry automatically after a previous error.
+    if (!_nostrRequested ||
+        (_nostrError != null && _nostrUri == null && !_nostrLoading)) {
+      _generateNostrUri();
+    }
+  }
+
+  Future<void> _generateNostrUri() async {
+    // Cancel any outstanding watchdog from a previous attempt.
+    _nostrWatchdog?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _nostrLoading = true;
+      _nostrError = null;
+      _nostrUri = null;
+      _nostrRequested = true;
+    });
+
+    // Await the FFI call so any immediate bridge errors are surfaced.
+    try {
+      await bind.startNostrWebrtcHost();
+    } catch (e) {
+      if (!mounted) return;
+      _nostrWatchdog?.cancel();
+      setState(() {
+        _nostrLoading = false;
+        _nostrError = 'Failed to start Nostr host: $e';
+      });
+      return;
+    }
+
+    // Safety watchdog: if Rust hasn't responded within 30 s, surface an error.
+    _nostrWatchdog = Timer(const Duration(seconds: 30), () {
+      if (!mounted) return;
+      if (_nostrLoading) {
+        setState(() {
+          _nostrLoading = false;
+          _nostrError = 'Timed out generating offer. Tap "New Offer" to retry.';
+        });
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    return Overlay(
+      key: _overlayKeyState.key,
+      initialEntries: [
+        OverlayEntry(builder: (context) => _buildScaffold()),
+      ],
+    );
+  }
+
+  Widget _buildScaffold() {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Mobile Command Center'),
@@ -240,21 +454,146 @@ class _MobileControlPageState extends State<MobileControlPage> {
             const SizedBox(height: 6),
             const Text('Pair New Device', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            if (_loading) const CircularProgressIndicator(),
-            if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
-            if (_connectionUrl != null) ...[
-              QrImageView(
-                data: _connectionUrl!,
-                version: QrVersions.auto,
-                size: 130,
-                backgroundColor: Colors.white,
-              ),
-              const SizedBox(height: 6),
-              OutlinedButton.icon(
-                onPressed: _generateConnectionUrl,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Refresh IP'),
-              ),
+            // Tab selector: LAN vs Nostr
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ChoiceChip(
+                  label: const Text('LAN'),
+                  selected: _qrTab == 0,
+                  onSelected: (_) => setState(() => _qrTab = 0),
+                ),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  label: const Text('Nostr'),
+                  selected: _qrTab == 1,
+                  onSelected: (_) => _onNostrTabSelected(),
+                  selectedColor: Colors.deepPurple.withOpacity(0.2),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (_qrTab == 0) ...[
+              if (_loading) const CircularProgressIndicator(),
+              if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
+              if (_connectionUrl != null) ...[
+                QrImageView(
+                  data: _connectionUrl!,
+                  version: QrVersions.auto,
+                  size: 130,
+                  backgroundColor: Colors.white,
+                ),
+                const SizedBox(height: 4),
+                Text('Same Wi-Fi required', style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+                if (!_serverReady)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      _listenerError != null
+                          ? 'Port 21118 unavailable: $_listenerError'
+                          : 'Waiting for listener on port 21118…',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: _listenerError != null ? Colors.red : Colors.orange[800],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                if (_connectionUrl != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_selectedLanIp ?? localIpFromUrl(_connectionUrl!)}:21118',
+                    style: TextStyle(fontSize: 9, color: Colors.grey[500]),
+                  ),
+                ],
+                if (_allLocalIps.length > 1) ...[
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    alignment: WrapAlignment.center,
+                    children: _allLocalIps.map((ip) {
+                      final selected = ip == _selectedLanIp;
+                      return ChoiceChip(
+                        label: Text(ip, style: const TextStyle(fontSize: 10)),
+                        selected: selected,
+                        onSelected: (_) {
+                          setState(() {
+                            _selectedLanIp = ip;
+                            _connectionUrl = 'anuvadini://direct-tcp:${ip}_port_21118';
+                          });
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  Text(
+                    'Wrong IP? Tap the address your phone can reach.',
+                    style: TextStyle(fontSize: 9, color: Colors.grey[500]),
+                  ),
+                ],
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                  onPressed: _generateConnectionUrl,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh IP'),
+                ),
+              ],
+            ] else ...[
+              if (_nostrLoading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 8),
+                      Text('Generating Nostr offer...', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    ],
+                  ),
+                )
+              else if (!_nostrRequested && _nostrUri == null && _nostrError == null)
+                // User just tapped the chip — generation is starting immediately
+                // via _onNostrTabSelected. Show a brief "starting" indicator.
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 8),
+                      Text('Starting Nostr...', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    ],
+                  ),
+                ),
+              if (_nostrError != null) ...[
+                Text(_nostrError!, style: const TextStyle(color: Colors.red, fontSize: 11)),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                  onPressed: _generateNostrUri,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                ),
+              ],
+              if (_nostrUri != null) ...[
+                QrImageView(
+                  data: _nostrUri!,
+                  version: QrVersions.auto,
+                  size: 150,
+                  errorCorrectionLevel: QrErrorCorrectLevel.L,
+                  backgroundColor: Colors.white,
+                ),
+                const SizedBox(height: 4),
+                Text('Works over 5G / internet', style: TextStyle(fontSize: 10, color: Colors.deepPurple[400])),
+                Text(
+                  'Wait ~10 s after opening, then scan. Phone fetches offer via Nostr.',
+                  style: TextStyle(fontSize: 9, color: Colors.grey[500]),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                OutlinedButton.icon(
+                  onPressed: _generateNostrUri,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('New Offer'),
+                ),
+              ],
             ],
             const SizedBox(height: 8),
             TextField(
@@ -282,9 +621,15 @@ class _MobileControlPageState extends State<MobileControlPage> {
                 Icon(Icons.circle, size: 10, color: _serverReady ? Colors.green : Colors.orange),
                 const SizedBox(width: 4),
                 Text(
-                  _serverReady ? 'Listener: Ready' : 'Listener: Initializing',
+                  _serverReady
+                      ? 'Listener: Ready (port 21118)'
+                      : (_listenerError != null
+                          ? 'Listener: Failed'
+                          : 'Listener: Initializing'),
                   style: TextStyle(
-                    color: _serverReady ? Colors.green : Colors.orange,
+                    color: _serverReady
+                        ? Colors.green
+                        : (_listenerError != null ? Colors.red : Colors.orange),
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
                   ),
@@ -497,17 +842,35 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
     setState(() => _sessionStatus[key] = 'Connecting');
 
+    // #region agent log
+    agentDebugLog('L2', 'mobile_control_page.dart:_connectDevice', 'connect start', {
+      'ip': ip,
+      'key': key,
+      'hasTempPassword': (device['temp_password'] ?? '').isNotEmpty,
+      'connectionId': 'direct-tcp:${ip}_port_21118',
+    });
+    // #endregion
+
     try {
-      // Use a unique SessionID per panel so sessions are fully isolated
+      // Use a unique SessionID per panel so sessions are fully isolated.
       final ffi = FFI(null);
       final connectionId = 'direct-tcp:${ip}_port_21118';
       ffi.id = connectionId;
       Get.put<FFI>(ffi, tag: 'mobile-inline-$key', permanent: false);
 
+      ffi.dialogManager.setOverlayState(_overlayKeyState);
+      // #region agent log
+      agentDebugLog('L3', 'mobile_control_page.dart:_connectDevice', 'overlay attached', {
+        'ip': ip,
+        'overlayReady': _overlayKeyState.state != null,
+      });
+      // #endregion
+
       initSharedStates(connectionId);
 
-      // Mark as Connected when the first decoded frame arrives
+      // Mark as Connected when the first decoded frame arrives.
       ffi.imageModel.addCallbackOnFirstImage((_) {
+        _imageTimeout?.cancel();
         if (mounted) setState(() => _sessionStatus[key] = 'Connected');
       });
 
@@ -515,17 +878,35 @@ class _MobileControlPageState extends State<MobileControlPage> {
       // Do NOT call ffi.ffiModel.updateEventListener() after this — that
       // method overwrites the GLOBAL platformFFI event callback, which
       // would break all other active sessions.
-      ffi.start(connectionId);
+      // Use the phone's temporary password so the login is auto-authorized.
+      final tempPwd = device['temp_password'] ?? '';
+      if (tempPwd.isNotEmpty) {
+        ffi.start(connectionId, password: tempPwd, isSharedPassword: false);
+      } else {
+        ffi.start(connectionId);
+      }
 
       setState(() {
         _activeSessions[key] = ffi;
       });
       showToast('Connecting to $ip...');
+
+      // Timeout: if no first image within 30s, report the pi state to help diagnose.
+      _imageTimeout?.cancel();
+      _imageTimeout = Timer(const Duration(seconds: 30), () {
+        if (!mounted || _sessionStatus[key] == 'Connected') return;
+        final pi = ffi.ffiModel.pi.isSet.value;
+        showToast('No video from $ip after 30s (pi.isSet=$pi). '
+            'Check phone screen-capture permission & restart the phone app.');
+      });
     } catch (e) {
+      _imageTimeout?.cancel();
       setState(() => _sessionStatus[key] = 'Error');
       showToast('Failed to connect $ip: $e');
     }
   }
+
+  Timer? _imageTimeout;
 
   Future<void> _disconnectDevice(Map<String, String> device) async {
     final key = _deviceKey(device);

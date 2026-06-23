@@ -1,0 +1,44 @@
+[package]
+name = "clap"
+version = "4.5.53"
+description = "A simple to use, efficient, and full-featured Command Line Argument Parser"
+categories = ["command-line-interface"]
+keywords = ["argument", "cli", "arg", "parser", "parse"]
+repository = "https://github.com/clap-rs/clap"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.74"
+
+[package.metadata.docs.rs]
+features = ["unstable-doc"]
+rustdoc-args = ["--generate-link-to-definition"]
+
+[features]
+default = ["std", "color", "help", "usage", "error-context", "suggestions"]
+debug = ["clap_builder/debug", "clap_derive?/debug"]
+unstable-doc = ["clap_builder/unstable-doc", "derive"]
+std = ["clap_builder/std"]
+color = ["clap_builder/color"]
+help = ["clap_builder/help"]
+usage = ["clap_builder/usage"]
+error-context = ["clap_builder/error-context"]
+suggestions = ["clap_builder/suggestions"]
+deprecated = ["clap_builder/deprecated", "clap_derive?/deprecated"]
+derive = ["dep:clap_derive"]
+cargo = ["clap_builder/cargo"]
+wrap_help = ["clap_builder/wrap_help"]
+env = ["clap_builder/env"]
+unicode = ["clap_builder/unicode"]
+string = ["clap_builder/string"]
+unstable-v5 = ["clap_builder/unstable-v5", "clap_derive?/unstable-v5", "deprecated"]
+unstable-ext = ["clap_builder/unstable-ext"]
+unstable-styles = ["clap_builder/unstable-styles"]
+unstable-derive-ui-tests = []
+unstable-markdown = ["clap_derive/unstable-markdown"]
+
+[lib]
+bench = false
+
+[dependencies]
+clap_builder = { version = "=4.5.53", default-features = false }
+clap_derive = { version = "=4.5.49", optional = true }

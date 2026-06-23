@@ -15,7 +15,6 @@ use lazy_static::lazy_static;
 use serde::Deserialize;
 use std::ops::Not;
 use std::os::raw::c_void;
-use std::sync::atomic::{AtomicPtr, Ordering::SeqCst};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -37,8 +36,7 @@ const MAX_AUDIO_FRAME_TIMEOUT: Duration = Duration::from_millis(1000);
 
 struct FrameRaw {
     name: &'static str,
-    ptr: AtomicPtr<u8>,
-    len: usize,
+    buffer: Vec<u8>,
     last_update: Instant,
     timeout: Duration,
     enable: bool,
@@ -48,8 +46,7 @@ impl FrameRaw {
     fn new(name: &'static str, timeout: Duration) -> Self {
         FrameRaw {
             name,
-            ptr: AtomicPtr::default(),
-            len: 0,
+            buffer: Vec::new(),
             last_update: Instant::now(),
             timeout,
             enable: false,
@@ -58,49 +55,35 @@ impl FrameRaw {
 
     fn set_enable(&mut self, value: bool) {
         self.enable = value;
-        self.ptr.store(std::ptr::null_mut(), SeqCst);
-        self.len = 0;
+        self.buffer.clear();
     }
 
-    fn update(&mut self, data: *mut u8, len: usize) {
+    fn update(&mut self, data: &[u8]) {
         if self.enable.not() {
             return;
         }
-        self.len = len;
-        self.ptr.store(data, SeqCst);
+        self.buffer.clear();
+        self.buffer.extend_from_slice(data);
         self.last_update = Instant::now();
     }
 
-    // take inner data as slice
-    // release when success
-    fn take<'a>(&mut self, dst: &mut Vec<u8>, last: &mut Vec<u8>) -> Option<()> {
+    fn take(&mut self, dst: &mut Vec<u8>, last: &mut Vec<u8>) -> Option<()> {
         if self.enable.not() {
             return None;
         }
-        let ptr = self.ptr.load(SeqCst);
-        if ptr.is_null() || self.len == 0 {
-            None
-        } else {
-            if self.last_update.elapsed() > self.timeout {
-                log::trace!("Failed to take {} raw,timeout!", self.name);
-                return None;
-            }
-            let slice = unsafe { std::slice::from_raw_parts(ptr, self.len) };
-            self.release();
-            if last.len() == slice.len() && crate::would_block_if_equal(last, slice).is_err() {
-                return None;
-            }
-            dst.resize(slice.len(), 0);
-            unsafe {
-                std::ptr::copy_nonoverlapping(slice.as_ptr(), dst.as_mut_ptr(), slice.len());
-            }
-            Some(())
+        if self.buffer.is_empty() {
+            return None;
         }
-    }
-
-    fn release(&mut self) {
-        self.len = 0;
-        self.ptr.store(std::ptr::null_mut(), SeqCst);
+        if self.last_update.elapsed() > self.timeout {
+            log::trace!("Failed to take {} raw,timeout!", self.name);
+            return None;
+        }
+        if last.len() == self.buffer.len() && crate::would_block_if_equal(last, &self.buffer).is_err() {
+            return None;
+        }
+        std::mem::swap(dst, &mut self.buffer);
+        self.buffer.clear();
+        Some(())
     }
 }
 
@@ -129,7 +112,8 @@ pub extern "system" fn Java_ffi_FFI_onVideoFrameUpdate(
     let jb = JByteBuffer::from(buffer);
     if let Ok(data) = env.get_direct_buffer_address(&jb) {
         if let Ok(len) = env.get_direct_buffer_capacity(&jb) {
-            VIDEO_RAW.lock().unwrap().update(data, len);
+            let slice = unsafe { std::slice::from_raw_parts(data, len) };
+            VIDEO_RAW.lock().unwrap().update(slice);
         }
     }
 }
@@ -143,7 +127,8 @@ pub extern "system" fn Java_ffi_FFI_onAudioFrameUpdate(
     let jb = JByteBuffer::from(buffer);
     if let Ok(data) = env.get_direct_buffer_address(&jb) {
         if let Ok(len) = env.get_direct_buffer_capacity(&jb) {
-            AUDIO_RAW.lock().unwrap().update(data, len);
+            let slice = unsafe { std::slice::from_raw_parts(data, len) };
+            AUDIO_RAW.lock().unwrap().update(slice);
         }
     }
 }

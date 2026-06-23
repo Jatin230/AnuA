@@ -66,6 +66,19 @@ impl Clone for WebRTCStream {
 
 impl WebRTCStream {
     #[inline]
+    fn parse_remote_signal_endpoint(endpoint: &str) -> ResultType<(Option<String>, String)> {
+        if crate::nostr_signaling::is_nostr_webrtc_uri(endpoint) {
+            let link = crate::nostr_signaling::parse_nostr_webrtc_uri(endpoint)?;
+            let Some(offer) = link.embedded_offer else {
+                return Err(anyhow::anyhow!("nostr-webrtc uri is missing an embedded WebRTC offer"));
+            };
+            Ok((Some(link.device_id), offer))
+        } else {
+            Ok((None, Self::get_remote_offer(endpoint)?))
+        }
+    }
+
+    #[inline]
     fn get_remote_offer(endpoint: &str) -> ResultType<String> {
         // Ensure the endpoint starts with the "webrtc://" prefix
         if !endpoint.starts_with("webrtc://") {
@@ -207,10 +220,10 @@ impl WebRTCStream {
         ms_timeout: u64,
     ) -> ResultType<Self> {
         log::debug!("New webrtc stream to endpoint: {}", remote_endpoint);
-        let remote_offer = if remote_endpoint.is_empty() {
-            "".into()
+        let (signal_device_id, remote_offer) = if remote_endpoint.is_empty() {
+            (None, "".into())
         } else {
-            Self::get_remote_offer(remote_endpoint)?
+            Self::parse_remote_signal_endpoint(remote_endpoint)?
         };
 
         let mut key = Self::get_key_for_sdp_json(&remote_offer)?;
@@ -294,9 +307,13 @@ impl WebRTCStream {
             Box::pin(async move {
                 log::debug!("WebRTC session peer connection state: {}", s);
                 match s {
+                    RTCPeerConnectionState::Connected => {
+                        crate::nostr_signaling::shutdown();
+                    }
                     RTCPeerConnectionState::Disconnected
                     | RTCPeerConnectionState::Failed
                     | RTCPeerConnectionState::Closed => {
+                        crate::nostr_signaling::shutdown();
                         let _ = on_connection_notify.send(true);
                         log::debug!("WebRTC session closing due to disconnected");
                         let _ = stream_for_close2.lock().await.close().await;
@@ -341,24 +358,63 @@ impl WebRTCStream {
             let sdp = pc.create_offer(None).await?;
             let mut gather_complete = pc.gathering_complete_promise().await;
             pc.set_local_description(sdp.clone()).await?;
-            let _ = gather_complete.recv().await;
+            // Wait up to 8 s for ICE candidates; proceed with whatever was gathered.
+            // Per WebRTC spec, the SDP is still valid after a partial gather.
+            let _ = timeout(Duration::from_secs(8), gather_complete.recv()).await;
 
             log::debug!("local offer:\n{}", sdp.sdp);
             // get local sdp key
             key = Self::get_key_for_sdp(&sdp)?;
             log::debug!("Start webrtc with local key: {}", key);
+
+            if let Some(local_desc) = pc.local_description().await {
+                let local_endpoint = Self::sdp_to_endpoint(&serde_json::to_string(&local_desc)?);
+                if let Some(device_id) = signal_device_id {
+                    tokio::spawn(async move {
+                        if let Err(err) = crate::nostr_signaling::publish_webrtc_answer(
+                            &device_id,
+                            &local_endpoint,
+                        )
+                        .await
+                        {
+                            log::warn!("Failed to publish WebRTC answer: {}", err);
+                        }
+                    });
+                }
+            } else {
+                return Err(anyhow::anyhow!("Local desc is not set"));
+            }
         } else {
             let sdp = serde_json::from_str::<RTCSessionDescription>(&remote_offer)?;
             pc.set_remote_description(sdp.clone()).await?;
             let answer = pc.create_answer(None).await?;
             let mut gather_complete = pc.gathering_complete_promise().await;
             pc.set_local_description(answer).await?;
-            let _ = gather_complete.recv().await;
+            // Wait up to 8 s for ICE candidates; proceed with whatever was gathered.
+            let _ = timeout(Duration::from_secs(8), gather_complete.recv()).await;
 
             log::debug!("remote offer:\n{}", sdp.sdp);
             // get remote sdp key
             key = Self::get_key_for_sdp(&sdp)?;
             log::debug!("Start webrtc with remote key: {}", key);
+
+            if let Some(local_desc) = pc.local_description().await {
+                let local_endpoint = Self::sdp_to_endpoint(&serde_json::to_string(&local_desc)?);
+                if let Some(device_id) = signal_device_id {
+                    tokio::spawn(async move {
+                        if let Err(err) = crate::nostr_signaling::publish_webrtc_answer(
+                            &device_id,
+                            &local_endpoint,
+                        )
+                        .await
+                        {
+                            log::warn!("Failed to publish WebRTC answer: {}", err);
+                        } else {
+                            log::info!("WebRTC answer published successfully to Nostr for device {}", device_id);
+                        }
+                    });
+                }
+            }
         }
 
         let mut final_lock = SESSIONS.lock().await;

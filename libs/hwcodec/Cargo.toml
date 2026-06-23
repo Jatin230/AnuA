@@ -1,0 +1,11 @@
+[package]
+name = "hwcodec"
+version = "0.1.0"
+edition = "2018"
+
+[features]
+vram = []
+
+[dependencies]
+log = "0.4"
+

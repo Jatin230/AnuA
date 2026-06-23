@@ -5,8 +5,8 @@ if errorlevel 1 exit /b 1
 
 set "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
 set "PATH=C:\Program Files\LLVM\bin;%PATH%"
-set "VCPKG_ROOT=C:\Users\jatin\Downloads\anuvadini\vcpkg_fake_root"
-set "BINDGEN_EXTRA_CLANG_ARGS=-IC:\Users\jatin\Downloads\anuvadini\vcpkg_fake_root\installed\x64-windows-static\include"
+set "VCPKG_ROOT=C:\Users\jatin\Downloads\rustdesk\vcpkg_fake_root"
+set "BINDGEN_EXTRA_CLANG_ARGS=-IC:\Users\jatin\Downloads\rustdesk\vcpkg_fake_root\installed\x64-windows-static\include"
 
 for %%I in ("%INCLUDE:;=" "%") do (
   if not "%%~I"=="" (

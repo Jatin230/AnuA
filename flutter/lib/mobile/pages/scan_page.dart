@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 
@@ -10,6 +11,8 @@ import 'package:zxing2/qrcode.dart';
 import '../../common.dart';
 import '../../models/platform_model.dart';
 import '../widgets/dialog.dart';
+import 'webrtc_signaling.dart';
+import '../../debug_agent_log.dart';
 
 class ScanPage extends StatefulWidget {
   @override
@@ -150,6 +153,7 @@ class _ScanPageState extends State<ScanPage> {
   void showServerSettingFromQr(String data) async {
     closeConnection();
     await controller?.pauseCamera();
+    data = data.trim();
     // Handle direct local IP connection (laptop QR code)
     if (data.startsWith('anuvadini://')) {
       final address = data.substring('anuvadini://'.length).trim();
@@ -172,13 +176,52 @@ class _ScanPageState extends State<ScanPage> {
       }
       return;
     }
+    if (data.contains('nostr-webrtc://')) {
+      if (!data.startsWith('nostr-webrtc://')) {
+        data = data.substring(data.indexOf('nostr-webrtc://'));
+      }
+      final deviceId = _parseNostrDeviceId(data);
+      final pubkey = _parseNostrPubkey(data);
+      if (deviceId.isEmpty) {
+        showToast('Invalid Nostr WebRTC QR');
+        controller?.resumeCamera();
+        return;
+      }
+      // #region agent log
+      agentDebugLog('N3', 'scan_page.dart:nostrScan', 'nostr qr parsed', {
+        'deviceId': deviceId,
+        'pubkeyLen': pubkey.length,
+        'hasEmbeddedOffer': _decodeEmbeddedOffer(_parseNostrOfferParam(data)) != null,
+      });
+      // #endregion
+      final embeddedOffer = _decodeEmbeddedOffer(_parseNostrOfferParam(data));
+      if (embeddedOffer != null) {
+        connect(context, _buildNostrWebRtcUri(deviceId, pubkey, embeddedOffer));
+      } else {
+        showToast('Fetching host offer from Nostr (may take ~15 s)...');
+        final offer = await fetchHostOffer(deviceId: deviceId, pubkey: pubkey);
+        if (offer != null && offer.startsWith('webrtc://')) {
+          connect(context, _buildNostrWebRtcUri(deviceId, pubkey, offer));
+        } else {
+          showToast(
+              'Failed to fetch host offer — open Nostr tab on laptop, wait 10 s, then rescan');
+          controller?.resumeCamera();
+        }
+      }
+      return;
+    }
     // Handle localtunnel format (legacy)
     if (data.startsWith('https://') && data.contains('.localtunnel.me')) {
       connect(context, "tunnel:$data");
       return;
     }
     if (!data.startsWith('config=')) {
-      showToast('Invalid QR code');
+      if (data.length > 500) {
+        showToast('QR unreadable — use the small Nostr QR (wait for it to finish generating)');
+      } else {
+        showToast('Invalid QR code');
+      }
+      controller?.resumeCamera();
       return;
     }
     try {
@@ -198,7 +241,7 @@ class _ScanPageState extends State<ScanPage> {
     showToast('Connecting to laptop at $ip:$port...');
     try {
       final socket =
-          await Socket.connect(ip, port, timeout: const Duration(seconds: 6));
+          await Socket.connect(ip, port, timeout: const Duration(seconds: 10));
 
       // Build device identity: name + device-local IP
       final deviceName = Platform.isAndroid
@@ -206,21 +249,32 @@ class _ScanPageState extends State<ScanPage> {
           : Platform.isIOS
               ? 'iPhone'
               : 'Mobile';
-      final interfaces = await NetworkInterface.list(
-          type: InternetAddressType.IPv4, includeLoopback: false);
-      String myIp = ip; // fallback: use the laptop-facing IP
-      for (final iface in interfaces) {
-        for (final addr in iface.addresses) {
-          if (!addr.isLoopback) {
-            myIp = addr.address;
-            break;
+      String myIp = bind.mainGetOptionSync(key: 'local-ip-addr');
+      if (myIp.isEmpty || myIp.startsWith('192.0.0.')) {
+        final interfaces = await NetworkInterface.list(
+            type: InternetAddressType.IPv4, includeLoopback: false);
+        for (final iface in interfaces) {
+          for (final addr in iface.addresses) {
+            if (!addr.isLoopback && !addr.address.startsWith('192.0.0.')) {
+              myIp = addr.address;
+              break;
+            }
           }
+          if (myIp.isNotEmpty && !myIp.startsWith('192.0.0.')) break;
         }
-        break;
       }
+      if (myIp.isEmpty) myIp = ip;
 
-      // Send registration message
-      socket.write('ANUVADINI_HELLO:$deviceName:$myIp\n');
+      // Fetch the phone's current temporary password so the laptop can connect
+      // back without requiring manual password entry.
+      String tempPassword = '';
+      try {
+        tempPassword = await bind.mainGetTemporaryPassword();
+      } catch (_) {}
+
+      // Send registration message — format: ANUVADINI_HELLO:<name>:<myIp>:<tempPwd>
+      // The tempPassword field is optional (empty string if unavailable).
+      socket.write('ANUVADINI_HELLO:$deviceName:$myIp:$tempPassword\n');
       await socket.flush();
 
       // Wait for acknowledgment (up to 4 s)
@@ -241,8 +295,55 @@ class _ScanPageState extends State<ScanPage> {
         showToast('Connected to laptop (no ACK received)');
       }
     } catch (e) {
-      showToast('Failed to connect: $e');
+      showToast(
+          'Cannot reach laptop at $ip:$port. Phone IP and laptop IP must be on the same Wi-Fi (e.g. both 192.168.68.x). Allow port $port in Windows Firewall. Disable router "AP/client isolation" if enabled.');
       controller?.resumeCamera();
     }
+  }
+
+  String _parseNostrDeviceId(String data) {
+    final uri = Uri.tryParse(data);
+    if (uri != null && uri.host.isNotEmpty) {
+      return uri.host;
+    }
+    return RegExp(r'nostr-webrtc://([^?#]+)').firstMatch(data)?.group(1) ?? '';
+  }
+
+  String _parseNostrPubkey(String data) {
+    final uri = Uri.tryParse(data);
+    if (uri != null && uri.fragment.isNotEmpty) {
+      return uri.fragment;
+    }
+    return RegExp(r'#([^?#]+)$').firstMatch(data)?.group(1) ?? '';
+  }
+
+  String _parseNostrOfferParam(String data) {
+    final uri = Uri.tryParse(data);
+    final fromUri = uri?.queryParameters['offer'];
+    if (fromUri != null && fromUri.isNotEmpty) {
+      return fromUri;
+    }
+    return RegExp(r'[?&]offer=([^#&]+)').firstMatch(data)?.group(1) ?? '';
+  }
+
+  /// Offer in QR is base64-encoded `webrtc://…`, not plain text.
+  String? _decodeEmbeddedOffer(String raw) {
+    if (raw.isEmpty) {
+      return null;
+    }
+    if (raw.startsWith('webrtc://')) {
+      return raw;
+    }
+    try {
+      final decoded = utf8.decode(base64Decode(raw));
+      return decoded.startsWith('webrtc://') ? decoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _buildNostrWebRtcUri(String deviceId, String pubkey, String offer) {
+    final encodedOffer = base64Encode(utf8.encode(offer));
+    return 'nostr-webrtc://$deviceId?offer=$encodedOffer#$pubkey';
   }
 }

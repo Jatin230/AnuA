@@ -103,7 +103,7 @@ endif()
 # flutter_rust_bridge
 set(ANUVADINI_LIB_BUILD_TYPE $<IF:$<CONFIG:Debug>,debug,release>)
 message(STATUS "anuvadini lib build type: ${ANUVADINI_LIB_BUILD_TYPE}")
-set(ANUVADINI_LIB "../../target/${ANUVADINI_LIB_BUILD_TYPE}/libanuvadini.dll")
+set(ANUVADINI_LIB "../../target/${ANUVADINI_LIB_BUILD_TYPE}/anuvadini.dll")
 install(FILES "${ANUVADINI_LIB}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
 COMPONENT Runtime RENAME libanuvadini.dll)
 

@@ -1,0 +1,59 @@
+[package]
+name = "flutter_rust_bridge"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+bytemuck = "1.11.0"
+anyhow = { workspace = true }
+chrono = { workspace = true, optional = true }
+threadpool = "1.8.1"
+lazy_static = { workspace = true }
+parking_lot = "0.12.1"
+flutter_rust_bridge_macros = { workspace = true }
+uuid = { workspace = true, optional = true }
+log = "0.4"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+allo-isolate = { workspace = true }
+libc = "0.2"
+parking_lot = { version = "0.12.1" }
+threadpool = { version = "1.8.1" }
+dart-sys = { version = "4.0.2" }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+console_error_panic_hook = { version = "0.1.7", optional = true }
+wasm-bindgen = { version = "0.2.81" }
+js-sys = { version = "0.3.60" }
+web-sys = { version = "0.3.58", features = [
+  "DedicatedWorkerGlobalScope",
+  "MessageEvent",
+  "MessagePort",
+  "ErrorEvent",
+  "Blob",
+  "BlobPropertyBag",
+  "Worker",
+  "Url",
+  "BroadcastChannel",
+] }
+
+[build-dependencies]
+cc = "1.0"
+build-target = "0.4.0"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.32"
+
+[features]
+default = ["chrono", "wasm-start"]
+uuid = ["dep:uuid", "allo-isolate/uuid"]
+chrono = ["dep:chrono", "allo-isolate/chrono"]
+wasm-start = ["console_error_panic_hook"]
+worker-single = []
+worker-max = []
+zero-copy = ["allo-isolate/zero-copy"]

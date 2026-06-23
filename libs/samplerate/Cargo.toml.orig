@@ -1,0 +1,17 @@
+[package]
+name = "samplerate"
+version = "0.2.4"
+authors = ["Frederick Gnodtke <frederick@gnodtke.net>"]
+readme = "README.md"
+categories = ["multimedia::audio"]
+description = "A library based on libsamplerate for converting samplerates"
+repository = "https://github.com/Prior99/rust-samplerate"
+keywords = ["audio", "samplerate"]
+license = "BSD-2-Clause"
+
+[dependencies]
+libsamplerate-sys = "0.1.10"
+
+[dev-dependencies]
+hound = "3.4"
+rstest = "0.6"

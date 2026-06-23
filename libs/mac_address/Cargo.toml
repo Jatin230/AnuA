@@ -1,0 +1,21 @@
+[package]
+name = "mac_address"
+version = "1.1.7"
+authors = ["rep-nop <repnop@outlook.com>"]
+edition = "2018"
+description = "Cross-platform retrieval of a network interface MAC address."
+repository = "https://github.com/rep-nop/mac_address"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+exclude = ["/.github/"]
+keywords = ["mac", "address", "network", "interface"]
+
+[dependencies]
+serde = { version = "1.0.198", features = ["derive"], optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "android", target_os = "illumos"))'.dependencies]
+nix = { version = "0.28", features = ["net"] }
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winerror", "ws2def", "iphlpapi"] }
+

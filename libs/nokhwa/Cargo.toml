@@ -1,0 +1,13 @@
+[package]
+name = "nokhwa"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+input-native = []
+
+[lib]
+name = "nokhwa"
+path = "src/lib.rs"
+
+

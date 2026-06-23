@@ -5,3 +5,11 @@
 
 # Keep rustls-platform-verifier classes for JNI
 -keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
+
+# Suppress optional transitive references reported by R8.
+-dontwarn org.apache.commons.io.build.AbstractOriginSupplier
+-dontwarn org.apache.commons.io.input.UnsynchronizedBufferedInputStream$Builder
+-dontwarn org.apache.commons.io.input.UnsynchronizedBufferedInputStream
+-dontwarn org.apache.commons.io.input.UnsynchronizedByteArrayInputStream$Builder
+-dontwarn org.apache.commons.io.output.UnsynchronizedByteArrayOutputStream$Builder
+-dontwarn org.slf4j.impl.StaticLoggerBinder

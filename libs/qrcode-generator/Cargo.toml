@@ -1,0 +1,29 @@
+[package]
+name = "qrcode-generator"
+version = "4.1.9"
+authors = ["Magic Len <len@magiclen.org>"]
+edition = "2021"
+rust-version = "1.62"
+repository = "https://github.com/magiclen/qrcode-generator"
+homepage = "https://magiclen.org/qrcode-generator"
+keywords = ["qrcode", "generate", "png", "svg", "vec"]
+categories = ["encoding", "multimedia::images"]
+description = "Generate QR Code matrices and images in RAW, PNG and SVG formats."
+license = "MIT"
+include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
+
+[dependencies]
+qrcodegen = "1.8"
+html-escape = "0.2"
+
+[dependencies.image]
+version = "0.24"
+optional = true
+default-features = false
+features = ["png"]
+
+[features]
+default = ["image"]
+
+[package.metadata.docs.rs]
+all-features = true

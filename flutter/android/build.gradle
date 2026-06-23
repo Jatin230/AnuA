@@ -1,11 +1,14 @@
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.gradle.api.tasks.compile.JavaCompile
+
 buildscript {
-    ext.kotlin_version = '1.9.20'
+    ext.kotlin_version = '2.1.0'
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:7.4.2'
+        classpath 'com.android.tools.build:gradle:8.11.1'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
@@ -24,13 +27,29 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(':app')
+    if (project.name == 'uni_links') {
+        project.plugins.withId('com.android.library') {
+            project.android {
+                namespace 'name.avioli.unilinks'
+            }
+        }
+    }
 }
 
-subprojects {
-    project.configurations.all {
-        resolutionStrategy.eachDependency { details ->
-            if (details.requested.group == 'org.jetbrains.kotlin') {
-                details.useVersion "1.9.20"
+gradle.projectsEvaluated {
+    subprojects { subproject ->
+        subproject.tasks.withType(KotlinCompile).configureEach {
+            kotlinOptions.jvmTarget = '11'
+        }
+        subproject.tasks.withType(JavaCompile).configureEach {
+            sourceCompatibility = '11'
+            targetCompatibility = '11'
+        }
+        def androidExtension = subproject.extensions.findByName('android')
+        if (androidExtension != null && androidExtension.hasProperty('compileOptions')) {
+            androidExtension.compileOptions {
+                sourceCompatibility JavaVersion.VERSION_11
+                targetCompatibility JavaVersion.VERSION_11
             }
         }
     }

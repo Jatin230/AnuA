@@ -87,3 +87,5 @@ flutter/web/
 *.log
 vcpkg/
 vcpkg_installed/
+# vendored Rust crates
+libs/vendor/

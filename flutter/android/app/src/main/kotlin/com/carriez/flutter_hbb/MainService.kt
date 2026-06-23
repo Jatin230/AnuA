@@ -28,6 +28,7 @@ import android.media.*
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.*
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Surface
@@ -113,7 +114,7 @@ class MainService : Service() {
 
     @Keep
     fun rustSetByName(name: String, arg1: String, arg2: String) {
-        Log.d(logTag, "rustSetByName: name=$name")
+        Log.d(logTag, "rustSetByName: name=$name arg1=$arg1 arg2=$arg2")
         when (name) {
             "add_connection" -> {
                 try {
@@ -179,11 +180,27 @@ class MainService : Service() {
             }
             "half_scale" -> {
                 val halfScale = arg1.toBoolean()
+                Log.d(logTag, "half_scale received: $halfScale, current isHalfScale=$isHalfScale, _isStart=$_isStart")
                 if (isHalfScale != halfScale) {
                     isHalfScale = halfScale
-                    updateScreenInfo(resources.configuration.orientation)
+                    // Only update screen info (which may restart capture) if capture
+                    // is already running. If _isStart is false, the Rust side will
+                    // call startCapture() once the flag is set — no restart needed here.
+                    if (_isStart) {
+                        updateScreenInfo(resources.configuration.orientation)
+                    } else {
+                        Log.d(logTag, "half_scale: skipping updateScreenInfo, capture not yet started")
+                        // Still update the SCREEN_INFO dimensions so next startCapture uses correct size
+                        SCREEN_INFO.let { info ->
+                            val oldWidth = info.width
+                            // Trigger a dimension recalc without restart
+                            val savedIsStart = _isStart
+                            _isStart = false  // ensure updateScreenInfo won't call stopCapture
+                            updateScreenInfo(resources.configuration.orientation)
+                            _isStart = savedIsStart
+                        }
+                    }
                 }
-                
             }
             else -> {
             }
@@ -300,7 +317,11 @@ class MainService : Service() {
                 SCREEN_INFO.height = h
                 SCREEN_INFO.scale = scale
                 SCREEN_INFO.dpi = dpi
-                if (isStart) {
+                // Only restart capture if _isStart is already true (capture was running).
+                // If called from half_scale before startCapture() finishes, _isStart is
+                // still false here, so we must NOT call startCapture() — Rust will call
+                // it itself once it has set the scale.
+                if (_isStart) {
                     stopCapture()
                     FFI.refreshScreen()
                     startCapture()
@@ -340,6 +361,19 @@ class MainService : Service() {
             intent.getParcelableExtra<Intent>(EXT_MEDIA_PROJECTION_RES_INTENT)?.let {
                 mediaProjection =
                     mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, it)
+                // Android 14+ requires registerCallback before using MediaProjection
+                mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        Log.w(logTag, "MediaProjection.Callback.onStop() called by system!")
+                        // System stopped the projection (e.g., user revoked permission)
+                        _isStart = false
+                        _isReady = false
+                        FFI.setFrameRawEnable("video", false)
+                        Handler(Looper.getMainLooper()).post {
+                            checkMediaPermission()
+                        }
+                    }
+                }, Handler(Looper.getMainLooper()))
                 checkMediaPermission()
                 _isReady = true
                 createForegroundNotification()
@@ -385,10 +419,13 @@ class MainService : Service() {
                                 if (image == null || !isStart) return@setOnImageAvailableListener
                                 val planes = image.planes
                                 val buffer = planes[0].buffer
+                                val size = buffer.remaining()
+                                Log.d(logTag, "ImageReader frame: size=$size")
                                 buffer.rewind()
                                 FFI.onVideoFrameUpdate(buffer)
                             }
-                        } catch (ignored: java.lang.Exception) {
+                        } catch (e: java.lang.Exception) {
+                            Log.e(logTag, "ImageReader callback error: ${e.message}")
                         }
                     }, serviceHandler)
                 }
@@ -418,16 +455,24 @@ class MainService : Service() {
         updateScreenInfo(resources.configuration.orientation)
         Log.d(logTag, "Start Capture progress...")
         surface = createSurface()
+        if (surface == null) {
+            Log.w(logTag, "startCapture fail, surface is null")
+            return false
+        }
 
-        _isStart = true
-        FFI.setFrameRawEnable("video",true)
-        MainActivity.rdClipboardManager?.setCaptureStarted(_isStart)
+        FFI.setFrameRawEnable("video", true)
 
         if (useVP9) {
             startVP9VideoRecorder(mediaProjection!!)
         } else {
             startRawVideoRecorder(mediaProjection!!)
         }
+
+        // Set _isStart AFTER VirtualDisplay is created, so that any half_scale callback
+        // arriving before this point does NOT trigger an erroneous stopCapture+startCapture.
+        _isStart = true
+        MainActivity.rdClipboardManager?.setCaptureStarted(_isStart)
+        Log.d(logTag, "startCapture done, _isStart=true")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!audioRecordHandle.createAudioRecorder(false, mediaProjection)) {
@@ -548,6 +593,9 @@ class MainService : Service() {
                     SCREEN_INFO.width, SCREEN_INFO.height, SCREEN_INFO.dpi, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     s, null, null
                 )
+                if (virtualDisplay == null) {
+                    Log.w(logTag, "createVirtualDisplay returned null!")
+                }
             }
         } catch (e: SecurityException) {
             Log.w(logTag, "createOrSetVirtualDisplay: got SecurityException, re-requesting confirmation");

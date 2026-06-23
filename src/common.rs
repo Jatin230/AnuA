@@ -128,6 +128,10 @@ pub fn global_init() -> bool {
             crate::server::wayland::init();
         }
     }
+    #[cfg(feature = "webrtc")]
+    {
+        hbb_common::nostr_signaling::ensure_started();
+    }
     true
 }
 

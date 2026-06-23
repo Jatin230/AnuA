@@ -163,19 +163,28 @@ Future<void> initEnv(String appType) async {
 }
 
 void runMainApp(bool startService) async {
-  // register uni links
+  // Initialize FFI first – required before any bind.* calls.
   await initEnv(kAppTypeMain);
+
+  // Launch the Flutter app immediately after FFI init so the window
+  // appears quickly and is not blocked by slow network/service checks.
+  runApp(App());
+
+  // Fire-and-forget async operations that do NOT need to block the UI.
   checkUpdate();
-  // trigger connection status updater
-  await bind.mainCheckConnectStatus();
+  // Trigger connection status updater – do NOT await so the UI is not
+  // delayed by IPv6 / STUN timeouts that can take 5+ seconds.
+  bind.mainCheckConnectStatus();
+
   if (startService) {
     gFFI.serverModel.startService();
     bind.pluginSyncUi(syncTo: kAppTypeMain);
     bind.pluginListReload();
   }
-  await Future.wait([gFFI.abModel.loadCache(), gFFI.groupModel.loadCache()]);
+
+  // Load caches in parallel (non-blocking – results update UI reactively).
+  Future.wait([gFFI.abModel.loadCache(), gFFI.groupModel.loadCache()]);
   gFFI.userModel.refreshCurrentUser();
-  runApp(App());
 
   bool? alwaysOnTop;
   if (isDesktop) {
@@ -189,7 +198,8 @@ void runMainApp(bool startService) async {
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     // Restore the location of the main window before window hide or show.
     await restoreWindowPosition(WindowType.Main);
-    // Check the startup argument, if we successfully handle the argument, we keep the main window hidden.
+    // Check the startup argument, if we successfully handle the argument,
+    // we keep the main window hidden.
     final handledByUniLinks = await initUniLinks();
     debugPrint("handled by uni links: $handledByUniLinks");
     if (handledByUniLinks || handleUriLink(cmdArgs: kBootArgs)) {
@@ -197,7 +207,8 @@ void runMainApp(bool startService) async {
     } else {
       windowManager.show();
       windowManager.focus();
-      // Move registration of active main window here to prevent from async visible check.
+      // Move registration of active main window here to prevent from
+      // async visible check.
       anuvadiniWinManager.registerActiveWindow(kWindowMainId);
     }
     windowManager.setOpacity(1);

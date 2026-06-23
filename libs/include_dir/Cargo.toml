@@ -1,0 +1,23 @@
+[package]
+name = "include_dir"
+version = "0.7.4"
+edition = "2021"
+rust-version = "1.64"
+authors = ["Michael Bryan <michaelfbryan@gmail.com>"]
+description = "Embed the contents of a directory in your binary"
+keywords = ["assets", "include", "embed", "dir"]
+categories = ["development-tools", "web-programming", "game-engines"]
+license = "MIT"
+repository = "https://github.com/Michael-F-Bryan/include_dir"
+
+[dependencies]
+glob = { version = "0.3", optional = true }
+include_dir_macros = { version = "0.7.4" }
+
+[features]
+default = []
+nightly = ["include_dir_macros/nightly"]
+metadata = ["include_dir_macros/metadata"]
+
+[package.metadata.docs.rs]
+all-features = true

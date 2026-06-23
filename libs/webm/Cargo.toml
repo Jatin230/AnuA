@@ -1,0 +1,10 @@
+[package]
+name = "webm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "webm"
+path = "src/lib.rs"
+
+

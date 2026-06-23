@@ -12,7 +12,7 @@ use cpal::{
 use crossbeam_queue::ArrayQueue;
 use magnum_opus::{Channels::*, Decoder as AudioDecoder};
 #[cfg(not(target_os = "linux"))]
-use ringbuf::{ring_buffer::RbBase, Rb};
+use ringbuf::traits::{Consumer, Observer, RingBuffer};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -253,6 +253,26 @@ impl Client {
     if config::is_incoming_only() {
         bail!("Incoming only mode");
     }
+    #[cfg(feature = "webrtc")]
+    if hbb_common::webrtc::is_webrtc_endpoint(peer) {
+        let conn = hbb_common::socket_client::connect_tcp(peer, CONNECT_TIMEOUT).await?;
+        return Ok((
+            (conn, true, None, None, "WebRTC"),
+            (0, "".to_owned()),
+            false,
+        ));
+    }
+    #[cfg(feature = "webrtc")]
+    if hbb_common::nostr_signaling::is_nostr_webrtc_uri(peer) {
+        let conn = hbb_common::Stream::WebRTC(
+            hbb_common::webrtc::WebRTCStream::new(peer, false, CONNECT_TIMEOUT).await?,
+        );
+        return Ok((
+            (conn, true, None, None, "WebRTC"),
+            (0, "".to_owned()),
+            false,
+        ));
+    }
     if peer.starts_with("tunnel:") {
         let url = &peer[7..];
         let conn = Stream::connect_websocket(url, None, None, CONNECT_TIMEOUT).await?;
@@ -279,10 +299,22 @@ impl Client {
         // Ensure we have a port; fallback to 21118
         let final_addr = hbb_common::socket_client::check_port(addr, 21118);
         log::info!("Attempting direct-tcp connection to: {}", final_addr);
+        // #region agent log
+        let direct_result = connect_tcp_local(final_addr.clone(), None, CONNECT_TIMEOUT).await;
+        hbb_common::agent_debug_log::agent_debug_log(
+            "L1",
+            "client.rs:direct-tcp",
+            "direct-tcp connect attempt",
+            serde_json::json!({
+                "target": final_addr,
+                "ok": direct_result.is_ok(),
+                "err": direct_result.as_ref().err().map(|e| e.to_string()),
+            }),
+        );
+        // #endregion
         return Ok((
             (
-                connect_tcp_local(final_addr, None, CONNECT_TIMEOUT)
-                    .await
+                direct_result
                     .map_err(|e| hbb_common::anyhow::anyhow!("{} (target: {})", e, peer))?,
                 true,
                 None,
@@ -1256,7 +1288,7 @@ impl Default for AudioBuffer {
 impl AudioBuffer {
     pub fn resize(&mut self, sample_rate: usize, channels: usize) {
         let capacity = sample_rate * channels * AUDIO_BUFFER_MS / 1000;
-        let old_capacity = self.0.lock().unwrap().capacity();
+        let old_capacity = self.0.lock().unwrap().capacity().get();
         if capacity != old_capacity {
             *self.0.lock().unwrap() = ringbuf::HeapRb::<f32>::new(capacity);
             self.1 = sample_rate * channels;
@@ -1317,7 +1349,7 @@ impl AudioBuffer {
         }
 
         let mut lock = self.0.lock().unwrap();
-        let cap = lock.capacity();
+        let cap = lock.capacity().get();
         let having = lock.occupied_len();
         let skip = (cap * max / (30 * N) + 1) & (!1);
         if (having > skip * 3) && (skip > 0) {
@@ -1331,7 +1363,7 @@ impl AudioBuffer {
     /// will be kept.
     fn append_pcm2(&self, buffer: &[f32]) -> usize {
         let mut lock = self.0.lock().unwrap();
-        let cap = lock.capacity();
+        let cap = lock.capacity().get();
         if buffer.len() > cap {
             lock.push_slice_overwrite(buffer);
             return cap;

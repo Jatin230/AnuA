@@ -128,6 +128,106 @@ pub fn stop_localtunnel_host() {
     crate::localtunnel::LocaltunnelHost::stop();
 }
 
+/// Start the Nostr-WebRTC host handshake.
+///
+/// Generates a local WebRTC offer, publishes it to Nostr relays, and fires
+/// one of the following global events back to Flutter:
+///   - `on_nostr_webrtc_ready`  with key `"uri"` containing the QR URI
+///   - `on_nostr_webrtc_error`  with key `"error"` containing the error message
+///
+/// ICE gathering is capped at 8 s inside WebRTCStream::new; this function
+/// adds a 20-second outer timeout as a safety net for the whole pipeline.
+pub fn start_nostr_webrtc_host() {
+    #[cfg(feature = "webrtc")]
+    {
+        // Run on a dedicated OS thread with its own Tokio runtime.
+        // We cannot use hbb_common::tokio::spawn here because the bridge
+        // calls this from a current_thread runtime that does not support
+        // tokio::spawn across thread boundaries — causing a panic/crash.
+        std::thread::spawn(|| {
+            let rt = match hbb_common::tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    let mut m = HashMap::new();
+                    m.insert("name".to_string(), "on_nostr_webrtc_error".to_string());
+                    m.insert("error".to_string(), format!("Failed to build runtime: {}", e));
+                    let event = hbb_common::serde_json::to_string(&m).unwrap_or_default();
+                    crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
+                    return;
+                }
+            };
+            rt.block_on(async move {
+                // ensure_started spins up relay threads with their own runtime — safe to call here.
+                hbb_common::nostr_signaling::ensure_started();
+
+                // Set up a watch BEFORE generating the URI so the background
+                // WebRTC thread can notify us when the offer is actually
+                // published to Nostr relays.
+                let mut offer_rx = hbb_common::nostr_signaling::offer_uri_watch();
+
+                let result = hbb_common::tokio::time::timeout(
+                    std::time::Duration::from_secs(20),
+                    hbb_common::nostr_signaling::generate_host_nostr_webrtc_uri(),
+                )
+                .await;
+                let initial_uri = match result {
+                    Ok(r) => r,
+                    Err(_) => Err(hbb_common::anyhow::anyhow!(
+                        "Timed out generating Nostr WebRTC offer (>20 s). \
+                         Check STUN server connectivity."
+                    )),
+                };
+                match initial_uri {
+                    Ok(initial_uri) => {
+                        // Wait for the background WebRTC thread to finish ICE
+                        // gathering and publish the offer to Nostr relays.
+                        // This ensures the phone can fetch the offer when it
+                        // scans the QR code.
+                        let wait = hbb_common::tokio::time::timeout(
+                            std::time::Duration::from_secs(35),
+                            offer_rx.changed(),
+                        )
+                        .await;
+                        let uri = match wait {
+                            Ok(Ok(_)) => {
+                                let u = offer_rx.borrow().clone();
+                                if u.is_empty() { initial_uri } else { u }
+                            }
+                            _ => initial_uri,
+                        };
+                        let mut m = HashMap::new();
+                        m.insert("name".to_string(), "on_nostr_webrtc_ready".to_string());
+                        m.insert("uri".to_string(), uri);
+                        let event = hbb_common::serde_json::to_string(&m).unwrap_or_default();
+                        crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
+                        // ponytail: do NOT push a second QR with ?offer= embedded — WebRTC
+                        // SDPs make the QR too dense for phone cameras to scan reliably.
+                    }
+                    Err(e) => {
+                        let mut m = HashMap::new();
+                        m.insert("name".to_string(), "on_nostr_webrtc_error".to_string());
+                        m.insert("error".to_string(), format!("{}", e));
+                        let event = hbb_common::serde_json::to_string(&m).unwrap_or_default();
+                        crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
+                    }
+                }
+            });
+        });
+    }
+    #[cfg(not(feature = "webrtc"))]
+    {
+        let mut m = HashMap::new();
+        m.insert("name".to_string(), "on_nostr_webrtc_error".to_string());
+        m.insert("error".to_string(), "WebRTC support is not compiled in this build.".to_string());
+        let event = hbb_common::serde_json::to_string(&m).unwrap_or_default();
+        crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
+    }
+}
+
+
 // This function is only used to count the number of control sessions.
 pub fn peer_get_sessions_count(id: String, conn_type: i32) -> SyncReturn<usize> {
     let conn_type = if conn_type == ConnType::VIEW_CAMERA as i32 {

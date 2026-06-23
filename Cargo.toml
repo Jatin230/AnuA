@@ -29,7 +29,7 @@ use_samplerate = ["samplerate"]
 use_rubato = ["rubato"]
 use_dasp = ["dasp"]
 flutter = ["flutter_rust_bridge"]
-default = ["use_dasp"]
+default = ["use_dasp", "flutter", "webrtc"]
 hwcodec = ["scrap/hwcodec"]
 vram = ["scrap/vram"]
 mediacodec = ["scrap/mediacodec"]
@@ -43,71 +43,75 @@ unix-file-copy-paste = [
     "clipboard/unix-file-copy-paste",
 ]
 screencapturekit = ["cpal/screencapturekit"]
+webrtc = ["hbb_common/webrtc"]
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-trait = "0.1"
+async-trait = { path = "libs/async-trait" }
 scrap = { path = "libs/scrap", features = ["wayland"] }
 hbb_common = { path = "libs/hbb_common" }
-serde_derive = "1.0"
-serde = "1.0"
-serde_json = "1.0"
-serde_repr = "0.1"
-cfg-if = "1.0"
-lazy_static = "1.4"
-sha2 = "0.10"
-repng = "0.2"
-parity-tokio-ipc = { git = "https://github.com/anuvadini-org/parity-tokio-ipc" }
-magnum-opus = { git = "https://github.com/anuvadini-org/magnum-opus" }
-dasp = { version = "0.11", features = ["signal", "interpolate-linear", "interpolate"], optional = true }
-rubato = { version = "0.12", optional = true }
-samplerate = { version = "0.2", optional = true }
-uuid = { version = "1.3", features = ["v4"] }
-clap = "4.2"
-rpassword = "7.2"
-num_cpus = "1.15"
-bytes = { version = "1.4", features = ["serde"] }
-default-net = "0.14"
-wol-rs = "1.0"
-flutter_rust_bridge = { version = "=1.80", features = ["uuid"], optional = true}
-errno = "0.3"
-rdev = { git = "https://github.com/anuvadini-org/rdev" }
-url = { version = "2.3", features = ["serde"] }
-crossbeam-queue = "0.3"
-hex = "0.4"
-chrono = "0.4"
-cidr-utils = "0.5"
-fon = "0.6"
-zip = "0.6"
-shutdown_hooks = "0.1"
-totp-rs = { version = "5.4", default-features = false, features = ["gen_secret", "otpauth"] }
-stunclient = "0.4"
-kcp-sys= { git = "https://github.com/anuvadini-org/kcp-sys"}
-reqwest = { version = "0.12", features = ["blocking", "socks", "json", "native-tls", "rustls-tls", "rustls-tls-native-roots", "gzip"], default-features=false }
+serde_derive = { path = "libs/serde_derive" }
+serde = { path = "libs/serde" }
+serde_json = { path = "libs/serde_json" }
+serde_repr = { path = "libs/serde_repr" }
+cfg-if = { path = "libs/cfg-if" }
+lazy_static = { path = "libs/lazy_static" }
+sha2 = { path = "libs/sha2" }
+repng = { path = "libs/repng" }
+nostr-sdk = { path = "libs/nostr-sdk" }
+parity-tokio-ipc = { path = "libs/parity-tokio-ipc" }
+magnum-opus = { path = "libs/magnum-opus" }
+dasp = { path = "libs/dasp", features = ["signal", "interpolate-linear", "interpolate"], optional = true }
+rubato = { path = "libs/rubato", optional = true }
+samplerate = { path = "libs/samplerate", optional = true }
+uuid = { path = "libs/uuid", features = ["v4"] }
+clap = { path = "libs/clap" }
+rpassword = { path = "libs/rpassword" }
+num_cpus = { path = "libs/num_cpus" }
+bytes = { path = "libs/bytes", features = ["serde"] }
+default-net = { path = "libs/default-net" }
+wol-rs = { path = "libs/wol-rs" }
+flutter_rust_bridge = { path = "libs/flutter_rust_bridge", features = ["uuid"], optional = true}
+errno = { path = "libs/errno" }
+rdev = { path = "libs/rdev" }
+url = { path = "libs/url", features = ["serde"] }
+crossbeam-queue = { path = "libs/crossbeam-queue" }
+hex = { path = "libs/hex" }
+chrono = { path = "libs/chrono" }
+cidr-utils = { path = "libs/cidr-utils" }
+fon = { path = "libs/fon" }
+zip = { path = "libs/zip" }
+shutdown_hooks = { path = "libs/shutdown_hooks" }
+totp-rs = { path = "libs/totp-rs", default-features = false, features = ["gen_secret", "otpauth"] }
+stunclient = { path = "libs/stunclient" }
+kcp-sys= { path = "libs/kcp-sys" }
+reqwest = { path = "libs/reqwest", features = ["blocking", "socks", "json", "native-tls", "rustls-tls", "rustls-tls-native-roots", "gzip"], default-features=false }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # https://github.com/anuvadini/anuvadini/discussions/10197, not use cpal on linux
-cpal = { git = "https://github.com/anuvadini-org/cpal", branch = "osx-screencapturekit" }
-ringbuf = "0.3"
+cpal = { path = "libs/cpal" }
+ringbuf = { path = "libs/ringbuf" }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-mac_address = "1.1"
-sciter-rs = { git = "https://github.com/anuvadini-org/rust-sciter", branch = "dyn" }
-sys-locale = "0.3"
+mac_address = { path = "libs/mac_address" }
+sciter-rs = { path = "libs/sciter-rs" }
+sys-locale = { path = "libs/sys-locale" }
 enigo = { path = "libs/enigo", features = [ "with_serde" ] }
 clipboard = { path = "libs/clipboard" }
-ctrlc = "3.2"
+ctrlc = { path = "libs/ctrlc" }
 # arboard = { version = "3.4", features = ["wayland-data-control"] }
-arboard = { git = "https://github.com/anuvadini-org/arboard", features = ["wayland-data-control"] }
-clipboard-master = { git = "https://github.com/anuvadini-org/clipboard-master" }
-portable-pty = { git = "https://github.com/anuvadini-org/wezterm", branch = "anuvadini/pty_based_0.8.1", package = "portable-pty" }
+arboard = { path = "libs/arboard", features = ["wayland-data-control"] }
+clipboard-master = { path = "libs/clipboard-master" }
+portable-pty = { path = "libs/portable-pty/pty" }
 
-system_shutdown = "4.0"
-qrcode-generator = "4.1"
+
+system_shutdown = { path = "libs/system_shutdown" }
+qrcode-generator = { path = "libs/qrcode-generator" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winapi = { version = "0.3", features = [
+winapi = { path = "libs/winapi", features = [
     "winuser",
     "wincrypt",
     "shellscalingapi",
@@ -122,7 +126,7 @@ winapi = { version = "0.3", features = [
     "ioapiset",
     "winspool",
 ] }
-windows = { version = "0.61", features = [
+windows = { path = "libs/windows", features = [
     "Win32",
     "Win32_Foundation",
     "Win32_Security",
@@ -138,81 +142,175 @@ windows = { version = "0.61", features = [
     "Win32_System_Threading",
     "Win32_UI_Shell",
 ] }
-winreg = "0.11"
-windows-service = "0.6"
+winreg = { path = "libs/winreg" }
+windows-service = { path = "libs/windows-service" }
 virtual_display = { path = "libs/virtual_display" }
 remote_printer = { path = "libs/remote_printer" }
-impersonate_system = { git = "https://github.com/anuvadini-org/impersonate-system" }
-shared_memory = "0.12"
-tauri-winrt-notification = "0.1"
-runas = "1.2"
+impersonate_system = { path = "libs/impersonate-system" }
+shared_memory = { path = "libs/shared_memory" }
+tauri-winrt-notification = { path = "libs/tauri-winrt-notification" }
+runas = { path = "libs/runas" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc = "0.2"
-cocoa = "0.24"
-dispatch = "0.2"
-core-foundation = "0.9"
-core-graphics = "0.22"
-include_dir = "0.7"
-fruitbasket = "0.10"
-objc_id = "0.1"
+objc = { path = "libs/objc" }
+cocoa = { path = "libs/cocoa" }
+dispatch = { path = "libs/dispatch" }
+core-foundation = { path = "libs/core-foundation" }
+core-graphics = { path = "libs/core-graphics" }
+include_dir = { path = "libs/include_dir" }
+fruitbasket = { path = "libs/fruitbasket" }
+objc_id = { path = "libs/objc_id" }
 # If we use piet "0.7" here, we must also update core-graphics to "0.24".
-piet = "0.6"
-piet-coregraphics = "0.6"
-foreign-types = "0.3"
+piet = { path = "libs/piet" }
+piet-coregraphics = { path = "libs/piet-coregraphics" }
+foreign-types = { path = "libs/foreign-types" }
 
 [target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
-tray-icon = { git = "https://github.com/tauri-apps/tray-icon", version = "0.21.3" }
-tao = { git = "https://github.com/anuvadini-org/tao", branch = "dev" }
-image = "0.24"
+tray-icon = { path = "libs/tray-icon", version = "0.24.0" }
+tao = { path = "libs/tao" }
+image = { path = "libs/image" }
 
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
-keepawake = { git = "https://github.com/anuvadini-org/keepawake-rs" }
+keepawake = { path = "libs/keepawake" }
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
-wallpaper = { git = "https://github.com/anuvadini-org/wallpaper.rs" }
-tiny-skia = "0.11"
-softbuffer = "0.4"
-fontdb = "0.23"
-bytemuck = "1.23"
-ttf-parser = "0.25"
+wallpaper = { path = "libs/wallpaper" }
+tiny-skia = { path = "libs/tiny-skia" }
+softbuffer = { path = "libs/softbuffer" }
+fontdb = { path = "libs/fontdb" }
+bytemuck = { path = "libs/bytemuck" }
+ttf-parser = { path = "libs/ttf-parser" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libxdo-sys = "0.11"
-psimple = { package = "libpulse-simple-binding", version = "2.27" }
-pulse = { package = "libpulse-binding", version = "2.27" }
-rust-pulsectl = { git = "https://github.com/anuvadini-org/pulsectl" }
-async-process = "1.7"
-evdev = { git="https://github.com/anuvadini-org/evdev" }
-dbus = "0.9"
-dbus-crossroads = "0.5"
-pam = { git="https://github.com/anuvadini-org/pam" }
-x11-clipboard = {git="https://github.com/clslaid/x11-clipboard", branch = "feat/store-batch", optional = true}
+libxdo-sys = { path = "libs/libxdo-sys-stub" }
+psimple = { package = "libpulse-simple-binding", path = "libs/psimple" }
+pulse = { package = "libpulse-binding", path = "libs/pulse" }
+rust-pulsectl = { path = "libs/rust-pulsectl" }
+async-process = { path = "libs/async-process" }
+evdev = { path = "libs/evdev" }
+dbus = { path = "libs/dbus" }
+dbus-crossroads = { path = "libs/dbus-crossroads" }
+pam = { path = "libs/pam" }
+x11-clipboard = { path = "libs/x11-clipboard", optional = true }
 x11rb =  {version = "0.12", features = ["all-extensions"], optional = true}
 percent-encoding = {version = "2.3", optional = true}
 once_cell = {version = "1.18", optional = true}
 nix = { version = "0.29", features = ["term", "process"]}
-gtk = "0.18"
-termios = "0.3"
-terminfo = "0.8"
-winit = "0.30"
+gtk = { path = "libs/gtk" }
+termios = { path = "libs/termios" }
+terminfo = { path = "libs/terminfo" }
+winit = { path = "libs/winit" }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
-android_logger = "0.13"
-jni = "0.21"
-android-wakelock = { git = "https://github.com/anuvadini-org/android-wakelock" }
+android_logger = { path = "libs/android_logger" }
+jni = { path = "libs/jni" }
+android-wakelock = { path = "libs/android-wakelock" }
 
 [workspace]
 members = ["libs/scrap", "libs/hbb_common", "libs/enigo", "libs/clipboard", "libs/virtual_display", "libs/virtual_display/dylib", "libs/portable", "libs/remote_printer"]
 exclude = ["vdi/host", "examples/custom_plugin"]
 
+# Redirect git deps to local paths so Android builds work fully offline
+[patch."https://github.com/anuvadini-org/rdev"]
+rdev = { path = "libs/rdev" }
+
+[patch."https://github.com/anuvadini-org/The-Fat-Controller"]
+tfc = { path = "libs/tfc" }
+
 # Patch libxdo-sys to use a stub implementation that doesn't require libxdo
 # This allows building and running on systems without libxdo installed (e.g., Wayland-only)
 [patch.crates-io]
 libxdo-sys = { path = "libs/libxdo-sys-stub" }
+cfg-if = { path = "libs/cfg-if" }
+serde = { path = "libs/serde" }
+serde_derive = { path = "libs/serde_derive" }
+serde_json = { path = "libs/serde_json" }
+serde_repr = { path = "libs/serde_repr" }
+async-trait = { path = "libs/async-trait" }
+lazy_static = { path = "libs/lazy_static" }
+sha2 = { path = "libs/sha2" }
+uuid = { path = "libs/uuid" }
+clap = { path = "libs/clap" }
+url = { path = "libs/url" }
+hex = { path = "libs/hex" }
+chrono = { path = "libs/chrono" }
+reqwest = { path = "libs/reqwest" }
+winit = { path = "libs/winit" }
+image = { path = "libs/image" }
+winapi = { path = "libs/winapi" }
+windows = { path = "libs/windows" }
+tao = { path = "libs/tao" }
+tray-icon = { path = "libs/tray-icon" }
+default-net = { path = "libs/default-net" }
+num_cpus = { path = "libs/num_cpus" }
+bytes = { path = "libs/bytes" }
+errno = { path = "libs/errno" }
+crossbeam-queue = { path = "libs/crossbeam-queue" }
+zip = { path = "libs/zip" }
+totp-rs = { path = "libs/totp-rs" }
+stunclient = { path = "libs/stunclient" }
+wol-rs = { path = "libs/wol-rs" }
+fon = { path = "libs/fon" }
+cidr-utils = { path = "libs/cidr-utils" }
+shutdown_hooks = { path = "libs/shutdown_hooks" }
+rubato = { path = "libs/rubato" }
+samplerate = { path = "libs/samplerate" }
+dasp = { path = "libs/dasp" }
+rpassword = { path = "libs/rpassword" }
+flutter_rust_bridge = { path = "libs/flutter_rust_bridge" }
+ringbuf = { path = "libs/ringbuf" }
+mac_address = { path = "libs/mac_address" }
+sys-locale = { path = "libs/sys-locale" }
+ctrlc = { path = "libs/ctrlc" }
+system_shutdown = { path = "libs/system_shutdown" }
+qrcode-generator = { path = "libs/qrcode-generator" }
+winreg = { path = "libs/winreg" }
+windows-service = { path = "libs/windows-service" }
+shared_memory = { path = "libs/shared_memory" }
+tauri-winrt-notification = { path = "libs/tauri-winrt-notification" }
+runas = { path = "libs/runas" }
+objc = { path = "libs/objc" }
+cocoa = { path = "libs/cocoa" }
+dispatch = { path = "libs/dispatch" }
+core-foundation = { path = "libs/core-foundation" }
+core-graphics = { path = "libs/core-graphics" }
+include_dir = { path = "libs/include_dir" }
+fruitbasket = { path = "libs/fruitbasket" }
+objc_id = { path = "libs/objc_id" }
+piet = { path = "libs/piet" }
+piet-coregraphics = { path = "libs/piet-coregraphics" }
+foreign-types = { path = "libs/foreign-types" }
+tiny-skia = { path = "libs/tiny-skia" }
+softbuffer = { path = "libs/softbuffer" }
+fontdb = { path = "libs/fontdb" }
+bytemuck = { path = "libs/bytemuck" }
+ttf-parser = { path = "libs/ttf-parser" }
+psimple = { package = "libpulse-simple-binding", path = "libs/psimple" }
+pulse = { package = "libpulse-binding", path = "libs/pulse" }
+async-process = { path = "libs/async-process" }
+dbus = { path = "libs/dbus" }
+dbus-crossroads = { path = "libs/dbus-crossroads" }
+gtk = { path = "libs/gtk" }
+termios = { path = "libs/termios" }
+terminfo = { path = "libs/terminfo" }
+android_logger = { path = "libs/android_logger" }
+jni = { path = "libs/jni" }
+winres = { path = "libs/winres" }
+cc = { path = "libs/cc" }
+os-version = { path = "libs/os-version" }
+hound = { path = "libs/hound" }
+docopt = { path = "libs/docopt" }
+repng = { path = "libs/repng" }
+nostr-sdk = { path = "libs/nostr-sdk" }
+nostr = { path = "libs/nostr" }
+nostr-database = { path = "libs/nostr-database" }
+nostr-relay-pool = { path = "libs/nostr-relay-pool" }
+nostr-signer = { path = "libs/nostr-signer" }
+nostr-zapper = { path = "libs/nostr-zapper" }
+core2 = { path = "libs/core2" }
 
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2025 Purslane Ltd. All rights reserved."
@@ -221,17 +319,17 @@ FileDescription = "Anuvadini Remote Desktop"
 OriginalFilename = "Anuvadini.exe"
 
 [target.'cfg(target_os="windows")'.build-dependencies]
-winres = "0.1"
-winapi = { version = "0.3", features = [ "winnt", "pdh", "synchapi" ] }
+winres = { path = "libs/winres" }
+winapi = { path = "libs/winapi", features = [ "winnt", "pdh", "synchapi" ] }
 
 [build-dependencies]
-cc = "1.0"
+cc = { path = "libs/cc" }
 hbb_common = { path = "libs/hbb_common" }
-os-version = "0.2"
+os-version = { path = "libs/os-version" }
 
 [dev-dependencies]
-hound = "3.5"
-docopt = "1.1"
+hound = { path = "libs/hound" }
+docopt = { path = "libs/docopt" }
 
 [package.metadata.bundle]
 name = "Anuvadini"
@@ -242,8 +340,9 @@ osx_minimum_system_version = "10.14"
 #https://github.com/johnthagen/min-sized-rust
 [profile.release]
 lto = "thin"
-codegen-units = 16
+codegen-units = 4
 panic = 'abort'
 strip = true
 #opt-level = 'z' # only have smaller size after strip
 rpath = true
+

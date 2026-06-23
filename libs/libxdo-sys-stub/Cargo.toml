@@ -7,3 +7,4 @@ description = "Dynamic loading wrapper for libxdo-sys that doesn't require libxd
 
 [dependencies]
 hbb_common = { path = "../hbb_common" }
+

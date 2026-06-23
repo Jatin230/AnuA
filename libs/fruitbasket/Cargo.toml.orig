@@ -1,0 +1,44 @@
+[package]
+name = "fruitbasket"
+version = "0.10.0"
+authors = ["Trevor Bentley <mrmekon@gmail.com>"]
+description = "Framework for running Rust programs in a Mac 'app bundle' environment."
+keywords = ["mac", "osx", "bundle", "cocoa", "appkit"]
+categories = ["api-bindings"]
+homepage = "https://github.com/mrmekon/fruitbasket"
+repository = "https://github.com/mrmekon/fruitbasket"
+documentation = "https://mrmekon.github.io/fruitbasket/fruitbasket/"
+license = "Apache-2.0"
+readme = "README.md"
+
+[features]
+logging = ["log", "log4rs"]
+dummy = []
+
+[dependencies]
+time = "0.1"
+log = {version = "0.4", optional = true, default-features = false, features = ["std"] }
+dirs = "2.0"
+
+[dependencies.log4rs]
+version = "0.8"
+optional = true
+default-features = false
+features = ["console_appender","rolling_file_appender", "compound_policy", "fixed_window_roller", "size_trigger"]
+
+[dev-dependencies]
+log = "0.4"
+
+[target."cfg(target_os = \"macos\")".dependencies]
+objc-foundation = "0.1"
+objc_id = "0.1"
+
+[target."cfg(target_os = \"macos\")".dependencies.objc]
+version = "0.2"
+features = ["exception"]
+
+[package.metadata.release]
+sign-commit = false
+pre-release-commit-message = "Release {{version}}"
+dev-version-ext = "rc"
+tag-message = "Release {{version}}"

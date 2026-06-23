@@ -42,6 +42,11 @@ lazy_static::lazy_static! {
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 static MANUAL_RESTARTED: AtomicBool = AtomicBool::new(false);
 static SENT_REGISTER_PK: AtomicBool = AtomicBool::new(false);
+static DIRECT_SERVER_READY: AtomicBool = AtomicBool::new(false);
+
+pub fn is_direct_server_ready() -> bool {
+    DIRECT_SERVER_READY.load(Ordering::SeqCst)
+}
 
 #[derive(Clone)]
 pub struct RendezvousMediator {
@@ -61,11 +66,6 @@ impl RendezvousMediator {
     pub async fn start_all() {
         crate::common::set_local_ip();
         crate::test_nat_type();
-        if config::is_outgoing_only() {
-            loop {
-                sleep(1.).await;
-            }
-        }
         crate::hbbs_http::sync::start();
         #[cfg(target_os = "windows")]
         if crate::platform::is_installed() && crate::is_server() {
@@ -73,13 +73,19 @@ impl RendezvousMediator {
         }
         check_zombie();
         let server = new_server();
-        if config::option2bool("stop-service", &Config::get_option("stop-service")) {
-            crate::test_rendezvous_server();
-        }
+        // Mobile LAN registration needs this even in outgoing-only builds.
         let server_cloned = server.clone();
         tokio::spawn(async move {
             direct_server(server_cloned).await;
         });
+        if config::is_outgoing_only() {
+            loop {
+                sleep(1.).await;
+            }
+        }
+        if config::option2bool("stop-service", &Config::get_option("stop-service")) {
+            crate::test_rendezvous_server();
+        }
         #[cfg(target_os = "android")]
         let start_lan_listening = true;
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -792,6 +798,7 @@ async fn direct_server(server: ServerPtr) {
             match hbb_common::tcp::listen_any(port as _).await {
                 Ok(l) => {
                     listener = Some(l);
+                    DIRECT_SERVER_READY.store(true, Ordering::SeqCst);
                     let event = serde_json::json!({
                         "name": "direct_server_status",
                         "data": "started"
@@ -800,11 +807,18 @@ async fn direct_server(server: ServerPtr) {
                     crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
                 }
                 Err(err) => {
+                    DIRECT_SERVER_READY.store(false, Ordering::SeqCst);
                     log::error!(
                         "Failed to start direct server on port: {}, error: {}",
                         port,
                         err
                     );
+                    let event = serde_json::json!({
+                        "name": "direct_server_status",
+                        "data": format!("error:{}", err)
+                    }).to_string();
+                    #[cfg(feature = "flutter")]
+                    crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
                     loop {
                         if port != get_direct_port() {
                             break;
@@ -817,6 +831,7 @@ async fn direct_server(server: ServerPtr) {
         if let Some(l) = listener.as_mut() {
             if disabled || port != get_direct_port() {
                 log::info!("Exit direct access listen");
+                DIRECT_SERVER_READY.store(false, Ordering::SeqCst);
                 listener = None;
                 continue;
             }
@@ -866,10 +881,10 @@ async fn direct_server(server: ServerPtr) {
 }
 
 /// Handle a mobile device registration handshake.
-/// Protocol: phone → laptop: `ANUVADINI_HELLO:<device_name>:<device_id>\n`
+/// Protocol: phone → laptop: `ANUVADINI_HELLO:<device_name>:<device_ip>[:<temp_password>]\n`
 ///           laptop → phone: `ANUVADINI_ACK\n`
 async fn handle_mobile_registration(mut stream: tokio::net::TcpStream, addr: SocketAddr) {
-    let mut buf = vec![0u8; 256];
+    let mut buf = vec![0u8; 512];
     let n = match hbb_common::timeout(3000, stream.read(&mut buf)).await {
         Ok(Ok(n)) if n > 0 => n,
         _ => {
@@ -882,20 +897,37 @@ async fn handle_mobile_registration(mut stream: tokio::net::TcpStream, addr: Soc
     let msg = msg.trim();
     log::info!("Match! Processing ANUVADINI_HELLO registration...");
 
-    // Format: ANUVADINI_HELLO:<name>:<id>
-    // The device_id field is optional; fall back to the peer IP.
-    let parts: Vec<&str> = msg.splitn(3, ':').collect();
-    let name = parts.get(1).copied().unwrap_or("Unknown Device");
-    let id   = parts.get(2).copied().unwrap_or_else(|| "unknown");
-    let ip   = addr.ip().to_string().replace("::ffff:", "");
+    // Format: ANUVADINI_HELLO:<name>:<ip>[:<temp_password>]
+    // The temp_password field is optional; fall back to empty string.
+    let parts: Vec<&str> = msg.splitn(5, ':').collect();
+    let name          = parts.get(1).copied().unwrap_or("Unknown Device");
+    let id            = parts.get(2).copied().unwrap_or("unknown");
+    let temp_password = parts.get(3).copied().unwrap_or("");
+    let ip            = addr.ip().to_string().replace("::ffff:", "");
 
     log::info!("Registered device — name: {}, id: {}, ip: {}", name, id, ip);
 
-    // Build the JSON payload that the Flutter event handler expects
+    // #region agent log
+    hbb_common::agent_debug_log::agent_debug_log(
+        "L5",
+        "rendezvous_mediator.rs:handle_mobile_registration",
+        "mobile registered",
+        serde_json::json!({
+            "name": name,
+            "reported_id": id,
+            "peer_ip": ip,
+            "has_temp_password": !temp_password.is_empty(),
+        }),
+    );
+    // #endregion
+
+    // Build the JSON payload that the Flutter event handler expects.
+    // temp_password is included so the laptop can connect back automatically.
     let device_json = serde_json::json!({
-        "name": name,
-        "id":   id,
-        "ip":   ip,
+        "name":          name,
+        "id":            id,
+        "ip":            ip,
+        "temp_password": temp_password,
     }).to_string();
 
     let event = serde_json::json!({

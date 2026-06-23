@@ -1,0 +1,24 @@
+[package]
+name = "nostr-database"
+version = "0.29.0"
+edition = "2021"
+description = "Database for Nostr apps"
+authors = ["Yuki Kishimoto <yukikishimoto@protonmail.com>"]
+homepage = "https://github.com/rust-nostr/nostr"
+repository = "https://github.com/rust-nostr/nostr.git"
+license = "MIT"
+readme = "README.md"
+rust-version = "1.64.0"
+keywords = ["nostr", "database"]
+
+[features]
+default = []
+
+[dependencies]
+async-trait = { version = "0.1" }
+lru = "0.12"
+nostr = { version = "*", features = ["std"] }
+thiserror = { version = "1" }
+tokio = { version = "*", features = ["sync"] }
+tracing = { version = "*", features = ["std", "attributes"] }
+

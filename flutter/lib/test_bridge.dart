@@ -4999,8 +4999,7 @@ class AnuvadiniImpl implements anuvadini {
     return _platform.executeNormal(FlutterRustBridgeTask(
       callFfi: (port_) =>
           _platform.inner.wire_main_change_language(port_, arg0),
-      parseSuccessData: _wire2api_unit,
-      constMeta: kMainChangeLanguageConstMeta,
+      parseSuccessData: _wire2api_unit,      constMeta: kMainChangeLanguageConstMeta,
       argValues: [lang],
       hint: hint,
     ));
@@ -8207,17 +8206,17 @@ class anuvadiniWire implements FlutterRustBridgeWireBase {
           lookup)
       : _lookup = lookup;
 
-  void store_dart_post_cobject(ffi.Pointer<ffi.NativeFunction<bool Function(ffi.Int64, ffi.Pointer<ffi.Void>)>> ptr) {
+  void store_dart_post_cobject(ffi.Pointer<ffi.NativeFunction<ffi.Bool Function(ffi.Int64, ffi.Pointer<ffi.Void>)>> ptr) {
     return _store_dart_post_cobject(
       ptr,
     );
   }
 
   late final _store_dart_post_cobjectPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.NativeFunction<bool Function(ffi.Int64, ffi.Pointer<ffi.Void>)>>)>>(
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.NativeFunction<ffi.Bool Function(ffi.Int64, ffi.Pointer<ffi.Void>)>>)>>(
           'store_dart_post_cobject');
   late final _store_dart_post_cobject =
-      _store_dart_post_cobjectPtr.asFunction<void Function(ffi.Pointer<ffi.NativeFunction<bool Function(ffi.Int64, ffi.Pointer<ffi.Void>)>>)>();
+      _store_dart_post_cobjectPtr.asFunction<void Function(ffi.Pointer<ffi.NativeFunction<ffi.Bool Function(ffi.Int64, ffi.Pointer<ffi.Void>)>>)>();
 
   Object get_dart_object(
     int ptr,

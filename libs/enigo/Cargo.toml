@@ -22,8 +22,8 @@ appveyor = { repository = "pythoneer/enigo-85xiy" }
 serde = { version = "1.0", optional = true }
 serde_derive = { version = "1.0", optional = true }
 log = "0.4"
-rdev = { git = "https://github.com/anuvadini-org/rdev" }
-tfc = { git = "https://github.com/anuvadini-org/The-Fat-Controller", branch = "history/rebase_upstream_20240722" }
+rdev = { path = "../rdev" }
+tfc = { path = "../tfc" }
 hbb_common = { path = "../hbb_common" }
 
 [features]
@@ -42,3 +42,4 @@ libxdo-sys = "0.11"
 
 [build-dependencies]
 pkg-config = "0.3"
+

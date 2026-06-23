@@ -1,0 +1,35 @@
+group 'com.pinciat.external_path'
+version '1.0-SNAPSHOT'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+         classpath 'com.android.tools.build:gradle:7.1.2'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    compileSdkVersion 33
+    namespace "com.pinciat.external_path"
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/java'
+    }
+    defaultConfig {
+        minSdkVersion 16
+    }
+}
+
