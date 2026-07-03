@@ -2653,6 +2653,7 @@ connect(BuildContext context, String id,
           ),
         );
       } else {
+        showToast('Navigating to RemotePage (id.length=${id.length})...');
         Navigator.push(
           context,
           MaterialPageRoute(

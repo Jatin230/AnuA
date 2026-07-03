@@ -253,26 +253,6 @@ impl Client {
     if config::is_incoming_only() {
         bail!("Incoming only mode");
     }
-    #[cfg(feature = "webrtc")]
-    if hbb_common::webrtc::is_webrtc_endpoint(peer) {
-        let conn = hbb_common::socket_client::connect_tcp(peer, CONNECT_TIMEOUT).await?;
-        return Ok((
-            (conn, true, None, None, "WebRTC"),
-            (0, "".to_owned()),
-            false,
-        ));
-    }
-    #[cfg(feature = "webrtc")]
-    if hbb_common::nostr_signaling::is_nostr_webrtc_uri(peer) {
-        let conn = hbb_common::Stream::WebRTC(
-            hbb_common::webrtc::WebRTCStream::new(peer, false, CONNECT_TIMEOUT).await?,
-        );
-        return Ok((
-            (conn, true, None, None, "WebRTC"),
-            (0, "".to_owned()),
-            false,
-        ));
-    }
     if peer.starts_with("tunnel:") {
         let url = &peer[7..];
         let conn = Stream::connect_websocket(url, None, None, CONNECT_TIMEOUT).await?;
@@ -299,22 +279,10 @@ impl Client {
         // Ensure we have a port; fallback to 21118
         let final_addr = hbb_common::socket_client::check_port(addr, 21118);
         log::info!("Attempting direct-tcp connection to: {}", final_addr);
-        // #region agent log
-        let direct_result = connect_tcp_local(final_addr.clone(), None, CONNECT_TIMEOUT).await;
-        hbb_common::agent_debug_log::agent_debug_log(
-            "L1",
-            "client.rs:direct-tcp",
-            "direct-tcp connect attempt",
-            serde_json::json!({
-                "target": final_addr,
-                "ok": direct_result.is_ok(),
-                "err": direct_result.as_ref().err().map(|e| e.to_string()),
-            }),
-        );
-        // #endregion
         return Ok((
             (
-                direct_result
+                connect_tcp_local(final_addr, None, CONNECT_TIMEOUT)
+                    .await
                     .map_err(|e| hbb_common::anyhow::anyhow!("{} (target: {})", e, peer))?,
                 true,
                 None,
@@ -325,6 +293,37 @@ impl Client {
             false,
         ));
     }
+    #[cfg(feature = "webrtc")]
+    {
+        log::info!("DEBUG peer in _start: '{}'", peer);
+        log::info!(
+            "DEBUG is_nostr_webrtc_uri: {}",
+            hbb_common::nostr_signaling::is_nostr_webrtc_uri(peer)
+    );
+}
+    #[cfg(feature = "webrtc")]
+    if hbb_common::nostr_signaling::is_nostr_webrtc_uri(peer) {
+        log::info!("Nostr-WebRTC URI detected: {}", peer);
+
+        return Ok((
+            (
+                Stream::WebRTC(
+                hbb_common::webrtc::WebRTCStream::new(
+                    peer,
+                    false,
+                    CONNECT_TIMEOUT,
+                )
+                .await?,
+            ),
+            true,
+            None,
+            None,
+            "WebRTC",
+        ),
+        (0, "".to_owned()),
+        false,
+    ));
+}
     // to-do: remember the port for each peer, so that we can retry easier
         if hbb_common::is_ip_str(peer) {
             return Ok((
@@ -377,6 +376,10 @@ impl Client {
                 (check_port(other_server, RENDEZVOUS_PORT), Vec::new(), true)
             }
         };
+
+        log::info!("DEBUG other_server='{}'", other_server);
+        log::info!("DEBUG rendezvous_server='{}'", rendezvous_server);
+        log::info!("DEBUG peer='{}'", peer);
 
         if crate::get_ipv6_punch_enabled() {
             crate::test_ipv6().await;
@@ -1962,7 +1965,19 @@ impl LoginConfigHandler {
     /// Load [`PeerConfig`].
     pub fn load_config(&self) -> PeerConfig {
         debug_assert!(self.id.len() > 0);
-        PeerConfig::load(&self.id)
+         let config_id = if self.id.starts_with("nostr-webrtc://") {
+        self.id
+            .trim_start_matches("nostr-webrtc://")
+            .split('?')
+            .next()
+            .unwrap_or(&self.id)
+         } else {
+            &self.id
+         };
+
+    log::info!("Loading peer config for: {}", config_id);
+
+    PeerConfig::load(config_id)
     }
 
     /// Save a [`PeerConfig`] into the handler.
@@ -2697,7 +2712,17 @@ impl LoginConfigHandler {
             let server = Config::get_rendezvous_server();
             (format!("{my_id}@{server}"), id.clone())
         } else {
-            (my_id, self.id.clone())
+            let pid = if self.id.starts_with("nostr-webrtc://") {
+                self.id
+                    .trim_start_matches("nostr-webrtc://")
+                    .split('?')
+                    .next()
+                    .unwrap_or(&self.id)
+                    .to_string()
+            } else {
+                self.id.clone()
+            };
+            (my_id, pid)
         };
         let mut avatar = get_builtin_option(keys::OPTION_AVATAR);
         if avatar.is_empty() {

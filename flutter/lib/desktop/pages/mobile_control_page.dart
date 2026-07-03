@@ -104,6 +104,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
   @override
   void dispose() {
     _nostrWatchdog?.cancel();
+    _nostrAutoRefresh?.cancel();
     _listenerProbe?.cancel();
     _imageTimeout?.cancel();
     _manualIpController.dispose();
@@ -333,6 +334,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
   }
 
   Timer? _nostrWatchdog;
+  Timer? _nostrAutoRefresh;
   // Whether the user has ever explicitly requested Nostr QR generation.
   bool _nostrRequested = false;
 
@@ -344,6 +346,10 @@ class _MobileControlPageState extends State<MobileControlPage> {
         (_nostrError != null && _nostrUri == null && !_nostrLoading)) {
       _generateNostrUri();
     }
+    // NOTE: We intentionally do NOT auto-refresh. The background WebRTC session
+    // waits up to 120 s for the phone's answer. Auto-refreshing every 90 s was
+    // killing active sessions by overwriting PENDING_ANSWER_TX and causing
+    // "WebRTC answer channel was dropped". The user can tap "New Offer" to retry.
   }
 
   Future<void> _generateNostrUri() async {
@@ -480,7 +486,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
                 QrImageView(
                   data: _connectionUrl!,
                   version: QrVersions.auto,
-                  size: 130,
+                  size: 200,
                   backgroundColor: Colors.white,
                 ),
                 const SizedBox(height: 4),
@@ -577,7 +583,6 @@ class _MobileControlPageState extends State<MobileControlPage> {
                   data: _nostrUri!,
                   version: QrVersions.auto,
                   size: 150,
-                  errorCorrectionLevel: QrErrorCorrectLevel.L,
                   backgroundColor: Colors.white,
                 ),
                 const SizedBox(height: 4),

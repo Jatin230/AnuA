@@ -53,13 +53,11 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
     #[cfg(target_os = "android")]
     {
         // flexi_logger can't work when android_logger initialized.
-        #[cfg(debug_assertions)]
         android_logger::init_once(
             android_logger::Config::default()
                 .with_max_level(log::LevelFilter::Debug) // limit log level
-                .with_tag("ffi"), // logs will show under mytag tag
+                .with_tag("anuvadini"),
         );
-        #[cfg(not(debug_assertions))]
         hbb_common::init_log(false, "");
         #[cfg(feature = "mediacodec")]
         scrap::mediacodec::check_mediacodec();
@@ -135,11 +133,40 @@ pub fn stop_localtunnel_host() {
 ///   - `on_nostr_webrtc_ready`  with key `"uri"` containing the QR URI
 ///   - `on_nostr_webrtc_error`  with key `"error"` containing the error message
 ///
+/// After the WebRTC handshake completes, automatically starts the Anuvadini
+/// server session on the data channel so the phone can log in and receive
+/// the remote desktop view.
+///
 /// ICE gathering is capped at 8 s inside WebRTCStream::new; this function
 /// adds a 20-second outer timeout as a safety net for the whole pipeline.
 pub fn start_nostr_webrtc_host() {
     #[cfg(feature = "webrtc")]
     {
+        use crate::server::{Connection, CLIENT_SERVER};
+        use hbb_common::webrtc::WebRTCStream;
+        use std::pin::Pin;
+        use std::future::Future;
+
+        // Register the session starter BEFORE calling generate_host_nostr_webrtc_uri.
+        // Stored as an Arc<dyn Fn> (SessionStarterFn) so it is NOT consumed after
+        // the first connection; run_host_webrtc_background loops and reuses the same
+        // factory for each new phone that scans the QR code.
+        hbb_common::nostr_signaling::set_host_session_starter(std::sync::Arc::new(
+            move |stream: WebRTCStream| -> Pin<Box<dyn Future<Output = ()> + Send>> {
+                Box::pin(async move {
+                    let stream = hbb_common::Stream::WebRTC(stream);
+                    let server = CLIENT_SERVER.clone();
+                    let id = server.write().unwrap().get_new_id();
+                    let addr = std::net::SocketAddr::new(
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0,
+                    );
+                    log::info!("Starting server session on WebRTC stream (id={})", id);
+                    Connection::start(addr, stream, id, std::sync::Arc::downgrade(&server), None).await;
+                    log::info!("Server WebRTC session ended (id={})", id);
+                })
+            },
+        ));
+
         // Run on a dedicated OS thread with its own Tokio runtime.
         // We cannot use hbb_common::tokio::spawn here because the bridge
         // calls this from a current_thread runtime that does not support
@@ -163,11 +190,6 @@ pub fn start_nostr_webrtc_host() {
                 // ensure_started spins up relay threads with their own runtime — safe to call here.
                 hbb_common::nostr_signaling::ensure_started();
 
-                // Set up a watch BEFORE generating the URI so the background
-                // WebRTC thread can notify us when the offer is actually
-                // published to Nostr relays.
-                let mut offer_rx = hbb_common::nostr_signaling::offer_uri_watch();
-
                 let result = hbb_common::tokio::time::timeout(
                     std::time::Duration::from_secs(20),
                     hbb_common::nostr_signaling::generate_host_nostr_webrtc_uri(),
@@ -182,32 +204,14 @@ pub fn start_nostr_webrtc_host() {
                 };
                 match initial_uri {
                     Ok(initial_uri) => {
-                        // Wait for the background WebRTC thread to finish ICE
-                        // gathering and publish the offer to Nostr relays.
-                        // This ensures the phone can fetch the offer when it
-                        // scans the QR code.
-                        let wait = hbb_common::tokio::time::timeout(
-                            std::time::Duration::from_secs(35),
-                            offer_rx.changed(),
-                        )
-                        .await;
-                        let uri = match wait {
-                            Ok(Ok(_)) => {
-                                let u = offer_rx.borrow().clone();
-                                if u.is_empty() { initial_uri } else { u }
-                            }
-                            _ => initial_uri,
-                        };
-                        let mut m = HashMap::new();
+                        let mut m = std::collections::HashMap::new();
                         m.insert("name".to_string(), "on_nostr_webrtc_ready".to_string());
-                        m.insert("uri".to_string(), uri);
+                        m.insert("uri".to_string(), initial_uri);
                         let event = hbb_common::serde_json::to_string(&m).unwrap_or_default();
                         crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
-                        // ponytail: do NOT push a second QR with ?offer= embedded — WebRTC
-                        // SDPs make the QR too dense for phone cameras to scan reliably.
                     }
                     Err(e) => {
-                        let mut m = HashMap::new();
+                        let mut m = std::collections::HashMap::new();
                         m.insert("name".to_string(), "on_nostr_webrtc_error".to_string());
                         m.insert("error".to_string(), format!("{}", e));
                         let event = hbb_common::serde_json::to_string(&m).unwrap_or_default();
@@ -226,6 +230,38 @@ pub fn start_nostr_webrtc_host() {
         crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
     }
 }
+
+/// Start the Nostr-WebRTC client handshake.
+///
+/// Called on the phone after fetching the host's WebRTC offer from a Nostr relay.
+/// Creates a WebRTC peer connection as the answerer, publishes the answer back
+/// to Nostr relays, and returns "ok" on success or an error description prefixed
+/// with "error: ".
+#[cfg(feature = "webrtc")]
+pub fn start_nostr_webrtc_client(device_id: String, offer_endpoint: String) -> SyncReturn<String> {
+    use hbb_common::base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+    use hbb_common::base64::Engine;
+
+    let encoded_offer = BASE64_STANDARD.encode(offer_endpoint.as_bytes());
+    let webrtc_uri = format!("nostr-webrtc://{}?offer={}", device_id, encoded_offer);
+
+    let rt = match hbb_common::tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => return SyncReturn(format!("error: Failed to build runtime: {}", e)),
+    };
+    SyncReturn(rt.block_on(async move {
+        hbb_common::nostr_signaling::ensure_started();
+        match hbb_common::webrtc::WebRTCStream::new(&webrtc_uri, false, 30_000).await {
+            Ok(_) => "ok".to_string(),
+            Err(e) => format!("error: {}", e),
+        }
+    }))
+}
+
+
 
 
 // This function is only used to count the number of control sessions.
@@ -261,7 +297,7 @@ pub fn session_add_existed_sync(
 
 pub fn session_add_sync(
     session_id: SessionID,
-    id: String,
+    mut id: String,
     is_file_transfer: bool,
     is_view_camera: bool,
     is_port_forward: bool,

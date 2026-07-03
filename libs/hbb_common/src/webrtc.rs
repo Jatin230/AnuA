@@ -4,7 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use webrtc::api::setting_engine::SettingEngine;
+use webrtc::api::setting_engine::{SettingEngine, SctpMaxMessageSize};
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice::mdns::MulticastDnsMode;
@@ -33,11 +33,39 @@ pub struct WebRTCStream {
     stream: Arc<Mutex<Arc<RTCDataChannel>>>,
     state_notify: watch::Receiver<bool>,
     send_timeout: u64,
+    /// Cached detached data channel (detach is one-shot).  The inner
+    /// DataChannel has direct `read`/`write` methods so we don't need
+    /// the AsyncRead/AsyncWrite traits.
+    detached: Mutex<Option<Arc<webrtc::data::data_channel::DataChannel>>>,
+    /// Reassembly buffer for chunked large messages.
+    /// Wrapped in Arc so that WebRTCStream can be cloned (stored in SESSIONS map).
+    reassembly_buf: Arc<Mutex<Option<ReassemblyState>>>,
 }
 
-/// Standard maximum message size for WebRTC data channels (RFC 8831, 65535 bytes).
-/// Most browsers, including Chromium, enforce this protocol limit.
-const DATA_CHANNEL_BUFFER_SIZE: u16 = u16::MAX;
+struct ReassemblyState {
+    /// Reassembled payload bytes so far.
+    buf: Vec<u8>,
+    /// Total number of chunks expected.
+    total_chunks: u16,
+    /// Index of the next expected chunk.
+    next_chunk: u16,
+}
+
+/// Maximum receive buffer for a single WebRTC data channel message.
+/// Each chunk is at most CHUNK_SIZE bytes of payload plus CHUNK_HEADER_SIZE bytes of header.
+const DATA_CHANNEL_BUFFER_SIZE: usize = 4 * 1024 * 1024; // 4 MB
+
+/// Maximum payload bytes per SCTP message. The Android WebRTC stack caps
+/// max-message-size at 65536. We stay well under that to leave room for
+/// the 5-byte chunk header and any SCTP framing overhead.
+const CHUNK_SIZE: usize = 60 * 1024; // 60 KB payload per chunk
+
+/// Chunk header layout (5 bytes):
+///   byte 0     : magic 0xAB  (identifies a chunked message)
+///   bytes 1-2  : chunk index (0-based, big-endian u16)
+///   bytes 3-4  : total chunks (big-endian u16)
+const CHUNK_HEADER_SIZE: usize = 5;
+const CHUNK_MAGIC: u8 = 0xAB;
 
 // use 3 public STUN servers to find out the NAT type, 2 must be the same address but different ports
 // https://stackoverflow.com/questions/72805316/determine-nat-mapping-behaviour-using-two-stun-servers
@@ -53,6 +81,21 @@ lazy_static::lazy_static! {
     static ref SESSIONS: Arc::<Mutex<HashMap<String, WebRTCStream>>> = Default::default();
 }
 
+/// Clear all cached host WebRTC peer connections.
+///
+/// Must be called before each new Nostr host session so that `WebRTCStream::new`
+/// creates a fresh peer connection (new DTLS certificate, new SDP fingerprint).
+/// Without this, the endpoint string is identical every session and Nostr relays
+/// return `"duplicate: have this event"`, causing the phone to receive a stale offer.
+pub async fn clear_host_sessions() {
+    let mut lock = SESSIONS.lock().await;
+    let count = lock.len();
+    lock.clear();
+    if count > 0 {
+        log::info!("Cleared {} cached WebRTC host session(s) before new Nostr offer", count);
+    }
+}
+
 impl Clone for WebRTCStream {
     fn clone(&self) -> Self {
         WebRTCStream {
@@ -60,6 +103,8 @@ impl Clone for WebRTCStream {
             stream: self.stream.clone(),
             state_notify: self.state_notify.clone(),
             send_timeout: self.send_timeout,
+            detached: Mutex::new(None),
+            reassembly_buf: self.reassembly_buf.clone(),
         }
     }
 }
@@ -72,7 +117,13 @@ impl WebRTCStream {
             let Some(offer) = link.embedded_offer else {
                 return Err(anyhow::anyhow!("nostr-webrtc uri is missing an embedded WebRTC offer"));
             };
-            Ok((Some(link.device_id), offer))
+            // The embedded offer may be a webrtc:// URI — decode it to get the SDP JSON
+            if offer.starts_with("webrtc://") {
+                let decoded = Self::get_remote_offer(&offer)?;
+                Ok((Some(link.device_id), decoded))
+            } else {
+                Ok((Some(link.device_id), offer))
+            }
         } else {
             Ok((None, Self::get_remote_offer(endpoint)?))
         }
@@ -219,11 +270,23 @@ impl WebRTCStream {
         force_relay: bool,
         ms_timeout: u64,
     ) -> ResultType<Self> {
-        log::debug!("New webrtc stream to endpoint: {}", remote_endpoint);
+        log::info!("WebRTCStream::new entered, endpoint len={}", remote_endpoint.len());
+        log::info!("WebRTCStream::new first 80 chars: {}", &remote_endpoint.chars().take(80).collect::<String>());
         let (signal_device_id, remote_offer) = if remote_endpoint.is_empty() {
+            log::info!("WebRTCStream::new: empty endpoint, will create local offer (host mode)");
             (None, "".into())
         } else {
-            Self::parse_remote_signal_endpoint(remote_endpoint)?
+            match Self::parse_remote_signal_endpoint(remote_endpoint) {
+                Ok(result) => {
+                    log::info!("WebRTCStream::new: parsed endpoint, has_device_id={}, offer_len={}",
+                        result.0.is_some(), result.1.len());
+                    result
+                }
+                Err(e) => {
+                    log::error!("WebRTCStream::new: parse_remote_signal_endpoint failed: {}", e);
+                    return Err(e);
+                }
+            }
         };
 
         let mut key = Self::get_key_for_sdp_json(&remote_offer)?;
@@ -241,6 +304,10 @@ impl WebRTCStream {
         let mut s = SettingEngine::default();
         s.detach_data_channels();
         s.set_ice_multicast_dns_mode(MulticastDnsMode::Disabled);
+        // Allow sending frames larger than the default 64 KB SCTP limit.
+        // VP9/AV1 keyframes on a 1080p display routinely exceed this,
+        // causing "outbound packet larger than maximum message size" errors.
+        s.set_sctp_max_message_size_can_send(SctpMaxMessageSize::Unbounded);
 
         // Create the API object
         let api = APIBuilder::new().with_setting_engine(s).build();
@@ -370,38 +437,9 @@ impl WebRTCStream {
             if let Some(local_desc) = pc.local_description().await {
                 let local_endpoint = Self::sdp_to_endpoint(&serde_json::to_string(&local_desc)?);
                 if let Some(device_id) = signal_device_id {
+                    log::info!("WebRTCStream::new: spawning publish_webrtc_answer (device={})", device_id);
                     tokio::spawn(async move {
-                        if let Err(err) = crate::nostr_signaling::publish_webrtc_answer(
-                            &device_id,
-                            &local_endpoint,
-                        )
-                        .await
-                        {
-                            log::warn!("Failed to publish WebRTC answer: {}", err);
-                        }
-                    });
-                }
-            } else {
-                return Err(anyhow::anyhow!("Local desc is not set"));
-            }
-        } else {
-            let sdp = serde_json::from_str::<RTCSessionDescription>(&remote_offer)?;
-            pc.set_remote_description(sdp.clone()).await?;
-            let answer = pc.create_answer(None).await?;
-            let mut gather_complete = pc.gathering_complete_promise().await;
-            pc.set_local_description(answer).await?;
-            // Wait up to 8 s for ICE candidates; proceed with whatever was gathered.
-            let _ = timeout(Duration::from_secs(8), gather_complete.recv()).await;
-
-            log::debug!("remote offer:\n{}", sdp.sdp);
-            // get remote sdp key
-            key = Self::get_key_for_sdp(&sdp)?;
-            log::debug!("Start webrtc with remote key: {}", key);
-
-            if let Some(local_desc) = pc.local_description().await {
-                let local_endpoint = Self::sdp_to_endpoint(&serde_json::to_string(&local_desc)?);
-                if let Some(device_id) = signal_device_id {
-                    tokio::spawn(async move {
+                        log::info!("publish_webrtc_answer task started for device {}", device_id);
                         if let Err(err) = crate::nostr_signaling::publish_webrtc_answer(
                             &device_id,
                             &local_endpoint,
@@ -413,6 +451,69 @@ impl WebRTCStream {
                             log::info!("WebRTC answer published successfully to Nostr for device {}", device_id);
                         }
                     });
+                } else {
+                    log::info!("WebRTCStream::new: no signal_device_id, skipping publish");
+                }
+            } else {
+                log::error!("WebRTCStream::new: local description not set after offer creation");
+                return Err(anyhow::anyhow!("Local desc is not set"));
+            }
+        } else {
+            log::info!("WebRTCStream::new: processing remote offer (client/answerer path)");
+            let sdp = match serde_json::from_str::<RTCSessionDescription>(&remote_offer) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("WebRTCStream::new: failed to parse remote offer SDP: {}", e);
+                    return Err(e.into());
+                }
+            };
+            log::info!("WebRTCStream::new: setting remote description");
+            if let Err(e) = pc.set_remote_description(sdp.clone()).await {
+                log::error!("WebRTCStream::new: set_remote_description failed: {}", e);
+                return Err(e.into());
+            }
+            log::info!("WebRTCStream::new: creating WebRTC answer");
+            let answer = match pc.create_answer(None).await {
+                Ok(a) => a,
+                Err(e) => {
+                    log::error!("WebRTCStream::new: create_answer failed: {}", e);
+                    return Err(e.into());
+                }
+            };
+            let mut gather_complete = pc.gathering_complete_promise().await;
+            log::info!("WebRTCStream::new: setting local description (answer)");
+            if let Err(e) = pc.set_local_description(answer).await {
+                log::error!("WebRTCStream::new: set_local_description failed: {}", e);
+                return Err(e.into());
+            }
+            log::info!("WebRTCStream::new: gathering ICE candidates (max 8s)...");
+            let _ = timeout(Duration::from_secs(8), gather_complete.recv()).await;
+            log::info!("WebRTCStream::new: ICE gathering complete (or timeout)");
+
+            log::debug!("remote offer:\n{}", sdp.sdp);
+            // get remote sdp key
+            key = Self::get_key_for_sdp(&sdp)?;
+            log::debug!("Start webrtc with remote key: {}", key);
+
+            if let Some(local_desc) = pc.local_description().await {
+                let local_endpoint = Self::sdp_to_endpoint(&serde_json::to_string(&local_desc)?);
+                if let Some(device_id) = signal_device_id {
+                    log::info!("WebRTCStream::new: spawning publish_webrtc_answer for device {}", device_id);
+                    tokio::spawn(async move {
+                        log::info!("publish_webrtc_answer task started for device {}", device_id);
+                        if let Err(err) = crate::nostr_signaling::publish_webrtc_answer(
+                            &device_id,
+                            &local_endpoint,
+                        )
+                        .await
+                        {
+                            log::warn!("Failed to publish WebRTC answer: {}", err);
+                        } else {
+                            log::info!("WebRTC answer published successfully to Nostr for device {}", device_id);
+                        }
+                    });
+                } else {
+                    log::info!("WebRTCStream::new: no signal_device_id (no nostr link), skipping publish");
                 }
             }
         }
@@ -428,6 +529,8 @@ impl WebRTCStream {
             stream,
             state_notify: notify_rx,
             send_timeout: ms_timeout,
+            detached: Mutex::new(None),
+            reassembly_buf: Arc::new(Mutex::new(None)),
         };
         final_lock.insert(key, webrtc_stream.clone());
         Ok(webrtc_stream)
@@ -493,12 +596,16 @@ impl WebRTCStream {
     #[inline]
     async fn wait_for_connect_result(&mut self) {
         if *self.state_notify.borrow() {
+            log::info!("WebRTC wait_for_connect: already connected");
             return;
         }
+        log::info!("WebRTC wait_for_connect: waiting for data channel open signal...");
         let _ = self.state_notify.changed().await;
+        log::info!("WebRTC wait_for_connect: data channel open signal received");
     }
 
     pub async fn send_bytes(&mut self, bytes: Bytes) -> ResultType<()> {
+        log::info!("WebRTC send_bytes: len={}, send_timeout={}", bytes.len(), self.send_timeout);
         if self.send_timeout > 0 {
             match timeout(
                 Duration::from_millis(self.send_timeout),
@@ -508,6 +615,7 @@ impl WebRTCStream {
             {
                 Ok(_) => {}
                 Err(_) => {
+                    log::error!("WebRTC send_bytes: timeout waiting for connect");
                     self.pc.close().await.ok();
                     return Err(Error::new(
                         ErrorKind::TimedOut,
@@ -519,38 +627,168 @@ impl WebRTCStream {
         } else {
             self.wait_for_connect_result().await;
         }
-        let stream = self.stream.lock().await.clone();
-        stream.send(&bytes).await?;
+
+        // Split into chunks if the payload exceeds the SCTP limit.
+        let total_chunks = (bytes.len() + CHUNK_SIZE - 1).max(1) / CHUNK_SIZE;
+        let total_chunks = total_chunks.max(1);
+        if total_chunks > u16::MAX as usize {
+            return Err(Error::new(ErrorKind::InvalidInput, "WebRTC message too large to chunk").into());
+        }
+        let total_chunks = total_chunks as u16;
+
+        let mut guard = self.detached.lock().await;
+        for chunk_idx in 0..total_chunks {
+            let start = chunk_idx as usize * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(bytes.len());
+            let payload = &bytes[start..end];
+
+            // Build the chunk packet: [magic, idx_hi, idx_lo, total_hi, total_lo, payload...]
+            let mut chunk_buf = Vec::with_capacity(CHUNK_HEADER_SIZE + payload.len());
+            chunk_buf.push(CHUNK_MAGIC);
+            chunk_buf.push((chunk_idx >> 8) as u8);
+            chunk_buf.push(chunk_idx as u8);
+            chunk_buf.push((total_chunks >> 8) as u8);
+            chunk_buf.push(total_chunks as u8);
+            chunk_buf.extend_from_slice(payload);
+
+            let chunk_bytes = Bytes::from(chunk_buf);
+
+            if let Some(ref dc) = *guard {
+                match dc.write(&chunk_bytes).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::error!("WebRTC send_bytes: chunk {}/{} write error: {}", chunk_idx + 1, total_chunks, e);
+                        return Err(e.into());
+                    }
+                }
+            } else {
+                drop(guard);
+                let stream = self.stream.lock().await.clone();
+                match stream.send(&chunk_bytes).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::error!("WebRTC send_bytes: chunk {}/{} RTCDataChannel send error: {}", chunk_idx + 1, total_chunks, e);
+                        return Err(e.into());
+                    }
+                }
+                // Re-acquire guard for subsequent chunks (if any)
+                guard = self.detached.lock().await;
+            }
+        }
+        if total_chunks > 1 {
+            log::info!("WebRTC send_bytes: sent {} chunks for {} byte message", total_chunks, bytes.len());
+        }
         Ok(())
     }
 
-    #[inline]
     pub async fn next(&mut self) -> Option<Result<BytesMut, Error>> {
         self.wait_for_connect_result().await;
-        let stream = self.stream.lock().await.clone();
+        loop {
+            // --- get the detached data channel ---
+            let mut guard = self.detached.lock().await;
+            if guard.is_none() {
+                log::info!("WebRTC next: cache empty, calling detach()");
+                let stream = self.stream.lock().await.clone();
+                let detach_result = stream.detach().await;
+                match detach_result {
+                    Ok(ref dc) => {
+                        log::info!("WebRTC next: detach succeeded");
+                        *guard = Some(Arc::clone(dc));
+                    }
+                    Err(e) => {
+                        log::error!("WebRTC next: detach failed: {}", e);
+                        drop(guard);
+                        self.pc.close().await.ok();
+                        return Some(Err(Error::new(
+                            ErrorKind::Other,
+                            format!("data channel detach error: {}", e),
+                        )));
+                    }
+                }
+            }
+            let dc = match guard.as_ref() {
+                Some(dc) => Arc::clone(dc),
+                None => {
+                    log::error!("WebRTC next: detached is None after detach attempt");
+                    return None;
+                }
+            };
+            drop(guard);
 
-        // TODO reuse buffer?
-        let mut buffer = BytesMut::zeroed(DATA_CHANNEL_BUFFER_SIZE as usize);
-        let dc = stream.detach().await.ok()?;
-        let n = match dc.read(&mut buffer).await {
-            Ok(n) => n,
-            Err(err) => {
+            // --- read one raw SCTP packet ---
+            let mut buffer = BytesMut::zeroed(DATA_CHANNEL_BUFFER_SIZE);
+            let n = match dc.read(&mut buffer).await {
+                Ok(n) => n,
+                Err(err) => {
+                    log::error!("WebRTC next: dc.read error: {}", err);
+                    self.pc.close().await.ok();
+                    return Some(Err(Error::new(
+                        ErrorKind::Other,
+                        format!("data channel read error: {}", err),
+                    )));
+                }
+            };
+            if n == 0 {
+                log::warn!("WebRTC next: dc.read returned 0 bytes (EOF)");
                 self.pc.close().await.ok();
                 return Some(Err(Error::new(
                     ErrorKind::Other,
-                    format!("data channel read error: {}", err),
+                    "data channel read exited with 0 bytes",
                 )));
             }
-        };
-        if n == 0 {
-            self.pc.close().await.ok();
-            return Some(Err(Error::new(
-                ErrorKind::Other,
-                "data channel read exited with 0 bytes",
-            )));
+            buffer.truncate(n);
+
+            // --- detect chunk header and reassemble if needed ---
+            if n > CHUNK_HEADER_SIZE && buffer[0] == CHUNK_MAGIC {
+                let chunk_idx = u16::from_be_bytes([buffer[1], buffer[2]]);
+                let total_chunks = u16::from_be_bytes([buffer[3], buffer[4]]);
+                let payload = &buffer[CHUNK_HEADER_SIZE..n];
+
+                if total_chunks == 1 {
+                    // Single-chunk message — skip reassembly overhead
+                    let mut out = BytesMut::with_capacity(payload.len());
+                    out.extend_from_slice(payload);
+                    log::info!("WebRTC next: single-chunk message {} bytes", out.len());
+                    return Some(Ok(out));
+                }
+
+                let mut rbuf_guard = self.reassembly_buf.lock().await;
+                if chunk_idx == 0 {
+                    // First chunk: (re)start reassembly
+                    *rbuf_guard = Some(ReassemblyState {
+                        buf: payload.to_vec(),
+                        total_chunks,
+                        next_chunk: 1,
+                    });
+                } else if let Some(ref mut state) = *rbuf_guard {
+                    if chunk_idx == state.next_chunk && total_chunks == state.total_chunks {
+                        state.buf.extend_from_slice(payload);
+                        state.next_chunk += 1;
+                    } else {
+                        // Out-of-order or wrong total: discard and restart
+                        log::error!("WebRTC next: unexpected chunk idx={} expected={} total={}, discarding",
+                            chunk_idx, state.next_chunk, total_chunks);
+                        *rbuf_guard = None;
+                    }
+                }
+
+                // Check if reassembly is complete
+                let complete = rbuf_guard.as_ref().map_or(false, |s| s.next_chunk == s.total_chunks);
+                if complete {
+                    let data = rbuf_guard.take().unwrap().buf;
+                    log::info!("WebRTC next: reassembled {} chunks -> {} bytes", total_chunks, data.len());
+                    let mut out = BytesMut::with_capacity(data.len());
+                    out.extend_from_slice(&data);
+                    return Some(Ok(out));
+                }
+                // More chunks expected — loop and read the next packet
+                continue;
+            } else {
+                // No chunk header — legacy or unchunked small message
+                log::info!("WebRTC next: unchunked message {} bytes", n);
+                return Some(Ok(buffer));
+            }
         }
-        buffer.truncate(n);
-        Some(Ok(buffer))
     }
 
     #[inline]

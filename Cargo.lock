@@ -4044,6 +4044,7 @@ dependencies = [
  "log",
  "mac_address",
  "machine-uid",
+ "nostr",
  "osascript",
  "protobuf",
  "protobuf-codegen",

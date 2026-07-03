@@ -91,6 +91,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     gFFI.ffiModel.updateEventListener(sessionId, widget.id);
+    debugPrint('RemotePage.initState: about to call gFFI.start with id=${widget.id.length} chars');
     gFFI.start(
       widget.id,
       password: widget.password,

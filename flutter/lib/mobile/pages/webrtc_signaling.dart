@@ -18,11 +18,24 @@ class NostrOfferLookup {
   });
 }
 
+/// nos.lol is excluded — its TLS certificate is not trusted on Windows
+/// (native-tls os error -2146762487) and causes connection failures.
 const List<String> _defaultNostrRelays = [
   'wss://relay.damus.io',
-  'wss://nos.lol',
   'wss://relay.primal.net',
 ];
+
+final Map<String, String> nostrDiagnostics = {};
+
+String getNostrDiagnosticsSummary() {
+  if (nostrDiagnostics.isEmpty) {
+    return 'No relays contacted.';
+  }
+  return nostrDiagnostics.entries.map((e) {
+    final name = e.key.replaceFirst('wss://', '');
+    return '$name: ${e.value}';
+  }).join('\n');
+}
 
 String _normalizeDeviceId(String deviceId) => deviceId.replaceAll(' ', '');
 
@@ -30,11 +43,14 @@ String _normalizePubkey(String pubkey) => pubkey.toLowerCase();
 
 /// Poll Nostr relays until the laptop publishes its WebRTC offer.
 /// ICE gathering on the host can take ~8 s, so we retry with backoff.
+/// [onStatus] is called with current diagnostic summary after each attempt.
 Future<String?> fetchHostOffer({
   required String deviceId,
   required String pubkey,
   Duration timeout = const Duration(seconds: 45),
+  void Function(String summary)? onStatus,
 }) async {
+  nostrDiagnostics.clear();
   final normalizedId = _normalizeDeviceId(deviceId);
   final normalizedPubkey = _normalizePubkey(pubkey);
   // #region agent log
@@ -57,9 +73,10 @@ Future<String?> fetchHostOffer({
             relay: relay,
             deviceId: normalizedId,
             pubkey: normalizedPubkey,
-            timeout: const Duration(seconds: 8),
+            timeout: const Duration(seconds: 15),
           );
         } catch (e) {
+          nostrDiagnostics[relay] = 'Conn error: ${e.toString().split(":").last.trim()}';
           // #region agent log
           agentDebugLog('N5', 'webrtc_signaling.dart:fetchHostOffer', 'relay error', {
             'relay': relay,
@@ -90,6 +107,10 @@ Future<String?> fetchHostOffer({
     });
     // #endregion
 
+    if (onStatus != null) {
+      onStatus(getNostrDiagnosticsSummary());
+    }
+
     final remaining = deadline.difference(DateTime.now());
     if (remaining <= Duration.zero) {
       break;
@@ -113,10 +134,19 @@ Future<NostrOfferLookup?> _fetchOfferFromRelay({
   required String pubkey,
   required Duration timeout,
 }) async {
-  final socket = await WebSocket.connect(relay).timeout(timeout);
+  nostrDiagnostics[relay] = 'Connecting...';
+  WebSocket socket;
+  try {
+    socket = await WebSocket.connect(relay).timeout(timeout);
+  } catch (e) {
+    nostrDiagnostics[relay] = 'Failed to connect: ${e.toString().split(":").last.trim()}';
+    rethrow;
+  }
+  nostrDiagnostics[relay] = 'Subscribed, waiting for offer...';
   final completer = Completer<NostrOfferLookup?>();
   final subscriptionId = 'nostr-${DateTime.now().microsecondsSinceEpoch}';
   var sawEose = false;
+  var eventsCount = 0;
 
   void finish(NostrOfferLookup? result) {
     if (!completer.isCompleted) {
@@ -139,6 +169,7 @@ Future<NostrOfferLookup?> _fetchOfferFromRelay({
         if (kind == 'EVENT' && decoded.length >= 3) {
           final event = decoded[2];
           if (event is Map<String, dynamic>) {
+            eventsCount++;
             final eventTags = event['tags'];
             final eventPubkey =
                 _normalizePubkey(event['pubkey']?.toString() ?? '');
@@ -148,6 +179,7 @@ Future<NostrOfferLookup?> _fetchOfferFromRelay({
                 eventPubkey.isEmpty ||
                 eventPubkey == pubkey;
             if (isHostMatch && pubkeyMatches && content.startsWith('webrtc://')) {
+              nostrDiagnostics[relay] = 'Offer found!';
               finish(NostrOfferLookup(
                 deviceId: deviceId,
                 pubkey: pubkey,
@@ -155,6 +187,7 @@ Future<NostrOfferLookup?> _fetchOfferFromRelay({
                 relay: relay,
               ));
             } else {
+              nostrDiagnostics[relay] = 'Event matched=$isHostMatch keyMatch=$pubkeyMatches (no webrtc)';
               // #region agent log
               agentDebugLog('N4', 'webrtc_signaling.dart:relayEvent', 'event rejected', {
                 'relay': relay,
@@ -168,11 +201,13 @@ Future<NostrOfferLookup?> _fetchOfferFromRelay({
           }
         } else if (kind == 'EOSE') {
           sawEose = true;
+          nostrDiagnostics[relay] = 'No offer found (EOSE) after $eventsCount events';
           // ponytail: don't finish on EOSE — another relay may still deliver
         }
       } catch (_) {}
     },
     onError: (e) {
+      nostrDiagnostics[relay] = 'Read error: ${e.toString().split(":").last.trim()}';
       // #region agent log
       agentDebugLog('N5', 'webrtc_signaling.dart:relayEvent', 'socket error', {
         'relay': relay,
@@ -185,16 +220,19 @@ Future<NostrOfferLookup?> _fetchOfferFromRelay({
     cancelOnError: true,
   );
 
+  // Look back 10 minutes (600 seconds) to be robust against clock drift between
+  // the phone and the host computer.
   final since = (DateTime.now().millisecondsSinceEpoch ~/ 1000) - 600;
   final filter = <String, dynamic>{
-    'kinds': [20005],
+    'kinds': [10005],
     '#t': [deviceId],
     'since': since,
-    'limit': 5,
+    'limit': 10,
   };
   socket.add(jsonEncode(['REQ', subscriptionId, filter]));
 
   return completer.future.timeout(timeout, onTimeout: () {
+    nostrDiagnostics[relay] = 'Timeout after $eventsCount events';
     // #region agent log
     agentDebugLog('N6', 'webrtc_signaling.dart:relayEvent', 'relay timeout', {
       'relay': relay,

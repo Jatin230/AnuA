@@ -2203,10 +2203,21 @@ impl Connection {
             #[cfg(any(target_os = "android", target_os = "ios"))]
             let is_logon = || crate::platform::is_prelogin();
 
+            let normalized_username = if lr.username.starts_with("nostr-webrtc://") {
+                lr.username
+                    .trim_start_matches("nostr-webrtc://")
+                    .split('?')
+                    .next()
+                    .unwrap_or(&lr.username)
+                    .replace(' ', "")
+            } else {
+                lr.username.replace(' ', "")
+            };
+
             if !hbb_common::is_ip_str(&lr.username)
                 && !hbb_common::is_domain_port_str(&lr.username)
                 && !lr.username.starts_with("direct-tcp:")
-                && lr.username != Config::get_id()
+                && normalized_username != Config::get_id().replace(' ', "")
             {
                 self.send_login_error(crate::client::LOGIN_MSG_OFFLINE)
                     .await;

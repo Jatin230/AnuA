@@ -65,6 +65,7 @@ pub mod websocket;
 pub mod webrtc;
 #[cfg(feature = "webrtc")]
 pub mod agent_debug_log;
+#[cfg(feature = "webrtc")]
 pub mod nostr_signaling;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub use rustls_platform_verifier;
