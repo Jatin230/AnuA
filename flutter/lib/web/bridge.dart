@@ -87,6 +87,7 @@ class AnuvadiniImpl {
       required String password,
       required bool isSharedPassword,
       String? connToken,
+      String? nostrMode,
       dynamic hint}) {
     return js.context.callMethod('setByName', [
       'session_add_sync',
@@ -96,7 +97,8 @@ class AnuvadiniImpl {
         'is_shared_password': isSharedPassword,
         'isFileTransfer': isFileTransfer,
         'isViewCamera': isViewCamera,
-        'isTerminal': isTerminal
+        'isTerminal': isTerminal,
+        'nostrMode': nostrMode,
       })
     ]);
   }

@@ -148,8 +148,13 @@ class _MobileControlPageState extends State<MobileControlPage> {
       try {
         final device = Map<String, String>.from(json.decode(evt['data']));
         if (!mounted) return;
+        final key = _deviceKey(device);
+        final status = _sessionStatus[key];
+        if (_activeSessions.containsKey(key) || status == 'Connecting' || status == 'Connected') {
+          return;
+        }
         setState(() {
-          _registeredDevices.removeWhere((d) => _deviceKey(d) == _deviceKey(device));
+          _registeredDevices.removeWhere((d) => _deviceKey(d) == key);
           _registeredDevices.add(device);
         });
         _showDeviceActionDialog(device);
@@ -193,20 +198,21 @@ class _MobileControlPageState extends State<MobileControlPage> {
               'Tip: Make sure the Anuvadini app is running on the phone before tapping "Control Phone".'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
             child: const Text('Later'),
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context);
-              _connectDevice(device);
+              Navigator.of(context, rootNavigator: true).pop();
+              Future.microtask(() => _connectDevice(device));
             },
             child: const Text('Control Phone'),
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context);
-              _authorizePhone(device['id'] ?? _deviceKey(device));
+              Navigator.of(context, rootNavigator: true).pop();
+              Future.microtask(
+                  () => _authorizePhone(device['id'] ?? _deviceKey(device)));
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
             child: const Text('Authorize Phone to Control Me'),
@@ -748,8 +754,18 @@ class _MobileControlPageState extends State<MobileControlPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(device['name'] ?? 'Unknown Device', style: const TextStyle(fontWeight: FontWeight.bold)),
-                      Text('IP: ${device['ip'] ?? '-'}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      Text(
+                        device['name'] ?? 'Unknown Device',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        'IP: ${_deviceAddressLabel(device['ip'])}',
+                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ],
                   ),
                 ),
@@ -821,6 +837,12 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
   String _deviceKey(Map<String, String> device) => device['id'] ?? device['ip'] ?? '';
 
+  String _deviceAddressLabel(String? ip) {
+    if (ip == null || ip.isEmpty) return '-';
+    if (ip.startsWith('nostr-webrtc://')) return 'Connecting...';
+    return ip;
+  }
+
   void _connectManualIp(String ip) {
     final cleaned = ip.trim();
     if (cleaned.isEmpty) return;
@@ -859,7 +881,11 @@ class _MobileControlPageState extends State<MobileControlPage> {
     try {
       // Use a unique SessionID per panel so sessions are fully isolated.
       final ffi = FFI(null);
-      final connectionId = 'direct-tcp:${ip}_port_21118';
+      // If the device registered via Nostr (ip = "nostr-webrtc://..."), use that
+      // directly as the connectionId; otherwise wrap as a direct-TCP address.
+      final connectionId = ip.startsWith('nostr-webrtc://')
+          ? ip
+          : 'direct-tcp:${ip}_port_21118';
       ffi.id = connectionId;
       Get.put<FFI>(ffi, tag: 'mobile-inline-$key', permanent: false);
 
@@ -872,6 +898,11 @@ class _MobileControlPageState extends State<MobileControlPage> {
       // #endregion
 
       initSharedStates(connectionId);
+
+      // Match RemotePage: bind the per-session event listener before start().
+      // Without this, the inline session can connect in Rust but never drive
+      // the Flutter image/event pipeline that clears "waiting for image".
+      ffi.ffiModel.updateEventListener(ffi.sessionId, connectionId);
 
       // Mark as Connected when the first decoded frame arrives.
       ffi.imageModel.addCallbackOnFirstImage((_) {
@@ -886,15 +917,25 @@ class _MobileControlPageState extends State<MobileControlPage> {
       // Use the phone's temporary password so the login is auto-authorized.
       final tempPwd = device['temp_password'] ?? '';
       if (tempPwd.isNotEmpty) {
-        ffi.start(connectionId, password: tempPwd, isSharedPassword: false);
+        ffi.start(
+          connectionId,
+          password: tempPwd,
+          isSharedPassword: false,
+          nostrMode: connectionId.startsWith('nostr-webrtc://') ? 'control' : null,
+        );
       } else {
-        ffi.start(connectionId);
+        ffi.start(
+          connectionId,
+          nostrMode: connectionId.startsWith('nostr-webrtc://') ? 'control' : null,
+        );
       }
 
       setState(() {
         _activeSessions[key] = ffi;
       });
-      showToast('Connecting to $ip...');
+      showToast(ip.startsWith('nostr-webrtc://')
+          ? 'Connecting...'
+          : 'Connecting to $ip...');
 
       // Timeout: if no first image within 30s, report the pi state to help diagnose.
       _imageTimeout?.cancel();

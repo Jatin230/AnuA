@@ -79,6 +79,22 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
         // core_main's init_log does not work for flutter since it is only applied to its load_library in main.c
         hbb_common::init_log(false, "flutter_ffi");
     }
+    #[cfg(feature = "webrtc")]
+    {
+        use std::pin::Pin;
+        use std::future::Future;
+        hbb_common::nostr_signaling::set_registration_handler(std::sync::Arc::new(
+            move |device_json: String| -> Pin<Box<dyn Future<Output = ()> + Send>> {
+                Box::pin(async move {
+                    let event = hbb_common::serde_json::json!({
+                        "name": "mobile_device_registered",
+                        "data": device_json,
+                    }).to_string();
+                    crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
+                })
+            }
+        ));
+    }
 }
 
 #[inline]
@@ -131,6 +147,8 @@ pub fn stop_localtunnel_host() {
 /// Generates a local WebRTC offer, publishes it to Nostr relays, and fires
 /// one of the following global events back to Flutter:
 ///   - `on_nostr_webrtc_ready`  with key `"uri"` containing the QR URI
+///   - `on_nostr_webrtc_offer_ready` with key `"uri"` containing the fully
+///     populated host offer URI once ICE gathering completes
 ///   - `on_nostr_webrtc_error`  with key `"error"` containing the error message
 ///
 /// After the WebRTC handshake completes, automatically starts the Anuvadini
@@ -146,6 +164,37 @@ pub fn start_nostr_webrtc_host() {
         use hbb_common::webrtc::WebRTCStream;
         use std::pin::Pin;
         use std::future::Future;
+        let mut offer_uri_rx = hbb_common::nostr_signaling::offer_uri_watch();
+
+        std::thread::spawn(move || {
+            let rt = match hbb_common::tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    let mut m = HashMap::new();
+                    m.insert("name".to_string(), "on_nostr_webrtc_error".to_string());
+                    m.insert("error".to_string(), format!("Failed to build runtime: {}", e));
+                    let event = hbb_common::serde_json::to_string(&m).unwrap_or_default();
+                    crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
+                    return;
+                }
+            };
+
+            rt.block_on(async move {
+                if offer_uri_rx.changed().await.is_ok() {
+                    let offer_uri = offer_uri_rx.borrow().clone();
+                    if !offer_uri.is_empty() {
+                        let mut m = HashMap::new();
+                        m.insert("name".to_string(), "on_nostr_webrtc_offer_ready".to_string());
+                        m.insert("uri".to_string(), offer_uri);
+                        let event = hbb_common::serde_json::to_string(&m).unwrap_or_default();
+                        crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
+                    }
+                }
+            });
+        });
 
         // Register the session starter BEFORE calling generate_host_nostr_webrtc_uri.
         // Stored as an Arc<dyn Fn> (SessionStarterFn) so it is NOT consumed after
@@ -261,6 +310,48 @@ pub fn start_nostr_webrtc_client(device_id: String, offer_endpoint: String) -> S
     }))
 }
 
+#[cfg(feature = "webrtc")]
+pub fn publish_nostr_registration(laptop_device_id: String, phone_offer_uri: String) {
+    std::thread::spawn(move || {
+        let rt = match hbb_common::tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                log::error!("Failed to build registration runtime: {}", e);
+                return;
+            }
+        };
+        rt.block_on(async move {
+            hbb_common::nostr_signaling::ensure_started();
+            let phone_name = crate::common::DEVICE_NAME.lock().unwrap().clone();
+            let phone_device_id = config::Config::get_id().replace(' ', "");
+            let temp_password = config::Config::get_permanent_password();
+
+            let registration_msg = format!(
+                "ANUVADINI_HELLO:{}:{}:{}:{}",
+                phone_name,
+                phone_device_id,
+                temp_password,
+                phone_offer_uri
+            );
+
+            log::info!("Publishing phone registration to Nostr for laptop: {}", laptop_device_id);
+            if let Err(err) = hbb_common::nostr_signaling::publish_webrtc_registration(
+                &laptop_device_id,
+                &registration_msg,
+            )
+            .await
+            {
+                log::error!("Failed to publish phone registration: {}", err);
+            } else {
+                log::info!("Successfully published phone registration");
+            }
+        });
+    });
+}
+
 
 
 
@@ -308,7 +399,29 @@ pub fn session_add_sync(
     password: String,
     is_shared_password: bool,
     conn_token: Option<String>,
+    nostr_mode: Option<String>,
 ) -> SyncReturn<String> {
+    // Handle Nostr-WebRTC QR mode selection
+    let (mut is_file_transfer, mut is_view_camera, mut is_port_forward, mut is_rdp, mut is_terminal) = 
+        if id.starts_with("nostr-webrtc://") {
+            match nostr_mode.as_deref() {
+                Some("view") => {
+                    log::info!("Nostr-WebRTC: User selected VIEW mode (share phone screen)");
+                    (false, true, false, false, false)
+                },
+                Some("control") => {
+                    log::info!("Nostr-WebRTC: User selected CONTROL mode (control laptop from phone)");
+                    (false, false, false, false, false)  // DEFAULT_CONN mode
+                },
+                _ => {
+                    // Default to view mode if not specified
+                    log::warn!("Nostr-WebRTC: No mode specified, defaulting to VIEW mode");
+                    (false, true, false, false, false)
+                }
+            }
+        } else {
+            (is_file_transfer, is_view_camera, is_port_forward, is_rdp, is_terminal)
+        };
     let add_res = session_add(
         &session_id,
         &id,

@@ -2519,7 +2519,8 @@ connect(BuildContext context, String id,
     bool forceRelay = false,
     String? password,
     String? connToken,
-    bool? isSharedPassword}) async {
+    bool? isSharedPassword,
+    String? nostrMode}) async {
   if (id == '') return;
   if (!isDesktop || desktopType == DesktopType.main) {
     try {
@@ -2661,7 +2662,8 @@ connect(BuildContext context, String id,
                 id: id,
                 password: password,
                 isSharedPassword: isSharedPassword,
-                forceRelay: forceRelay),
+                forceRelay: forceRelay,
+                nostrMode: nostrMode),
           ),
         );
       }

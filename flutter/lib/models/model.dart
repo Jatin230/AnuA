@@ -3761,6 +3761,7 @@ class FFI {
     int? tabWindowId,
     int? display,
     List<int>? displays,
+    String? nostrMode,
   }) {
     closed = false;
     if (isMobile) mobileReset();
@@ -3791,7 +3792,7 @@ class FFI {
     final isNewPeer = tabWindowId == null;
     // If tabWindowId != null, this session is a "tab -> window" one.
     // Else this session is a new one.
-    if (isNewPeer) {
+  if (isNewPeer) {
       // ignore: unused_local_variable
       final addRes = bind.sessionAddSync(
         sessionId: sessionId,
@@ -3806,6 +3807,7 @@ class FFI {
         password: password ?? '',
         isSharedPassword: isSharedPassword ?? false,
         connToken: connToken,
+        nostrMode: nostrMode,
       );
     } else if (display != null) {
       if (displays == null) {
@@ -3859,6 +3861,7 @@ class FFI {
       this.id = id;
       return;
     }
+  
 
     final cb = ffiModel.startEventListener(sessionId, id);
 

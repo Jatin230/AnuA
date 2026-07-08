@@ -48,6 +48,16 @@ lazy_static::lazy_static! {
     /// race condition where the client publishes the answer while the host is still
     /// busy publishing the offer.
     static ref RECEIVED_ANSWER_CACHE: Mutex<Option<(std::time::Instant, String)>> = Default::default();
+    /// Registered callback to handle incoming device registrations over Nostr.
+    static ref REGISTRATION_HANDLER: Mutex<Option<RegistrationHandlerFn>> = Default::default();
+}
+
+pub type RegistrationHandlerFn = Arc<
+    dyn Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
+>;
+
+pub fn set_registration_handler(handler: RegistrationHandlerFn) {
+    *REGISTRATION_HANDLER.lock().unwrap() = Some(handler);
 }
 
 /// Register a factory callback that will be called each time a new WebRTC
@@ -162,6 +172,10 @@ pub async fn publish_webrtc_offer(device_id: &str, sdp_or_endpoint: &str, sessio
 
 pub async fn publish_webrtc_answer(device_id: &str, sdp_or_endpoint: &str) -> ResultType<()> {
     publish_signal(device_id, sdp_or_endpoint, "_answer", "answer", 0).await
+}
+
+pub async fn publish_webrtc_registration(device_id: &str, registration_msg: &str) -> ResultType<()> {
+    publish_signal(device_id, registration_msg, "_reg", "registration", 0).await
 }
 
 fn get_nostr_keys() -> ResultType<nostr::key::Keys> {
@@ -425,37 +439,68 @@ fn handle_relay_message(text: &str) {
         _ => return,
     };
 
-    // Verify the event has the expected answer tag — guards against lenient
-    // relays that send back events not matching our subscription filter.
     let device_id = Config::get_id().replace(' ', "");
-    let expected_tag = format!("{}_answer", device_id);
-    let has_answer_tag = event["tags"]
-        .as_array()
-        .map(|tags| {
-            tags.iter().any(|tag| {
-                tag.as_array()
-                    .filter(|t| t.len() >= 2)
-                    .map(|t| t[0].as_str() == Some("t") && t[1].as_str() == Some(&expected_tag))
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false);
+    let answer_tag = format!("{}_answer", device_id);
+    let reg_tag = format!("{}_reg", device_id);
 
-    if !has_answer_tag {
-        log::debug!("Nostr relay: ignoring event without answer tag");
-        return;
+    let mut has_answer_tag = false;
+    let mut has_reg_tag = false;
+
+    if let Some(tags) = event["tags"].as_array() {
+        for tag in tags {
+            if let Some(t) = tag.as_array() {
+                if t.len() >= 2 && t[0].as_str() == Some("t") {
+                    if t[1].as_str() == Some(&answer_tag) {
+                        has_answer_tag = true;
+                    } else if t[1].as_str() == Some(&reg_tag) {
+                        has_reg_tag = true;
+                    }
+                }
+            }
+        }
     }
 
-    log::info!("Nostr relay: received WebRTC answer endpoint for device {}", device_id);
+    if has_answer_tag {
+        log::info!("Nostr relay: received WebRTC answer endpoint for device {}", device_id);
+        let mut guard = PENDING_ANSWER_TX.lock().unwrap();
+        if let Some(tx) = guard.take() {
+            log::info!("DEBUG: delivering answer to waiting host task");
+            let _ = tx.send(content);
+        } else {
+            log::info!("DEBUG: no waiting host task found, caching answer in RECEIVED_ANSWER_CACHE");
+            *RECEIVED_ANSWER_CACHE.lock().unwrap() = Some((std::time::Instant::now(), content));
+        }  
+    } else if has_reg_tag {
+        log::info!("Nostr relay: received WebRTC registration signal for device {}", device_id);
+        // Decode the base64 payload to get the ANUVADINI_HELLO message
+        let encoded = &content["webrtc://".len()..];
+        if let Ok(decoded_bytes) = BASE64_STANDARD.decode(encoded) {
+            if let Ok(msg) = String::from_utf8(decoded_bytes) {
+                if msg.starts_with("ANUVADINI_HELLO:") {
+                    // Format: ANUVADINI_HELLO:<name>:<id>[:<temp_password>]:<offer_uri>
+                    let parts: Vec<&str> = msg.splitn(5, ':').collect();
+                    let name          = parts.get(1).copied().unwrap_or("Unknown Device");
+                    let id            = parts.get(2).copied().unwrap_or("unknown");
+                    let temp_password = parts.get(3).copied().unwrap_or("");
+                    let offer_uri     = parts.get(4).copied().unwrap_or("");
 
-    let mut guard = PENDING_ANSWER_TX.lock().unwrap();
-    if let Some(tx) = guard.take() {
-        log::info!("DEBUG: delivering answer to waiting host task");
-        let _ = tx.send(content);
-    } else {
-        log::info!("DEBUG: no waiting host task found, caching answer in RECEIVED_ANSWER_CACHE");
-        *RECEIVED_ANSWER_CACHE.lock().unwrap() = Some((std::time::Instant::now(), content));
-    }  
+                    let device_json = serde_json::json!({
+                        "name":          name,
+                        "id":            id,
+                        "ip":            offer_uri, // Emulate IP as WebRTC URI for _connectDevice
+                        "temp_password": temp_password,
+                    }).to_string();
+
+                    let handler_opt = REGISTRATION_HANDLER.lock().unwrap().clone();
+                    if let Some(handler) = handler_opt {
+                        tokio::spawn(async move {
+                            handler(device_json).await;
+                        });
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn relay_background_loop(relay: String, shutdown: &mut watch::Receiver<bool>) {
@@ -464,16 +509,9 @@ async fn relay_background_loop(relay: String, shutdown: &mut watch::Receiver<boo
             Ok(mut stream) => {
                 log::info!("Connected Nostr relay: {}", relay);
 
-                // Subscribe to WebRTC answer events tagged with our device ID.
-                // Use a `since` timestamp 5 minutes in the past so that answers
-                // published while this relay was briefly offline are not missed.
                 let device_id = Config::get_id().replace(' ', "");
                 let answer_tag = format!("{}_answer", device_id);
-                // Use a tight 30-second look-back window so stale answers from
-                // previous sessions (that failed minutes ago) are NOT re-delivered
-                // to a brand-new session. The phone generates and publishes its
-                // answer within seconds of scanning the QR code, so 30 s is
-                // ample to catch answers that arrived while we were briefly offline.
+                let reg_tag = format!("{}_reg", device_id);
                 let since_ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -481,12 +519,12 @@ async fn relay_background_loop(relay: String, shutdown: &mut watch::Receiver<boo
                     .saturating_sub(30); // look back only 30 s
                 let req = json!([
                     "REQ",
-                    "sub_webrtc_answers",
+                    "sub_webrtc_signals",
                     {
                         "kinds": [10005],
-                        "#t": [answer_tag],
+                        "#t": [answer_tag, reg_tag],
                         "since": since_ts,
-                        "limit": 5
+                        "limit": 10
                     }
                 ]);
                 if let Ok(req_str) = serde_json::to_string(&req) {

@@ -74,7 +74,10 @@ class _ScanPageState extends State<ScanPage> {
     scanSubscription = controller.scannedDataStream.listen((scanData) {
       if (scanData.code != null) {
         controller.pauseCamera();
-        showServerSettingFromQr(scanData.code!);
+        showServerSettingFromQr(scanData.code!).then((_) {}).catchError((e) {
+          debugPrint('showServerSettingFromQr error: $e');
+          showToast('Error: $e');
+        });
       }
     });
   }
@@ -149,8 +152,10 @@ class _ScanPageState extends State<ScanPage> {
     super.dispose();
   }
 
-  void showServerSettingFromQr(String data) async {
-    closeConnection();
+  Future<void> showServerSettingFromQr(String data) async {
+    // Keep this route alive until the user picks a mode.
+    // Closing the scan page here disposes the widget before the dialog result
+    // is handled, which short-circuits both Nostr branches.
     await controller?.pauseCamera();
     // Handle direct local IP connection (laptop QR code)
     if (data.startsWith('anuvadini://')) {
@@ -192,9 +197,51 @@ class _ScanPageState extends State<ScanPage> {
         controller?.resumeCamera();
         return;
       }
+
+      // Ask the user which direction they want
+      if (!mounted) return;
+      final mode = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Connection Mode'),
+          content: const Text(
+              'What would you like to do?\n\n'
+              '• Control Laptop — use this phone to remotely control the laptop.\n\n'
+              '• Control Phone — let the laptop remotely control this phone.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'cancel'),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, 'control_laptop'),
+              child: const Text('Control Laptop'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+              onPressed: () => Navigator.pop(ctx, 'control_phone'),
+              child: const Text('Control Phone'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) return;
+      if (mode == null || mode == 'cancel') {
+        controller?.resumeCamera();
+        return;
+      }
+
+      if (mode == 'control_phone') {
+        await _handleNostrControlPhone(deviceId);
+        return;
+      }
+
+      // ── Control Laptop (original flow) ──
       final embeddedOffer = _decodeEmbeddedOffer(_parseNostrOfferParam(data));
       if (embeddedOffer != null) {
-        connect(context, _buildNostrWebRtcUri(deviceId, pubkey, embeddedOffer), password: password);
+        connect(context, _buildNostrWebRtcUri(deviceId, pubkey, embeddedOffer), password: password, nostrMode: 'control');
       } else {
         showToast('Fetching host offer from Nostr (may take ~45 s)...');
         final offer = await fetchHostOffer(
@@ -211,13 +258,13 @@ class _ScanPageState extends State<ScanPage> {
           // → WebRTCStream::new() → normal Anuvadini session over the data channel.
           final uri = _buildNostrWebRtcUri(deviceId, pubkey, offer);
           if (mounted) {
-            connect(context, uri, password: password);
+            connect(context, uri, password: password, nostrMode: 'control');
           } else {
             // Scanner was popped during the long fetchHostOffer await;
             // fall back to root navigator context.
             final rootCtx = globalKey.currentContext;
             if (rootCtx != null) {
-              connect(rootCtx, uri, password: password);
+              connect(rootCtx, uri, password: password, nostrMode: 'control');
             } else {
               showToast('Page closed during offer fetch — please scan again');
             }
@@ -257,6 +304,77 @@ class _ScanPageState extends State<ScanPage> {
       });
     } catch (e) {
       showToast('Invalid QR code');
+    }
+  }
+
+  /// Starts this phone as a Nostr-WebRTC host so the laptop can control it.
+  /// The phone publishes its WebRTC offer as a registration event targeted at
+  /// [laptopDeviceId]. The laptop's Nostr listener receives it, fires the
+  /// 'mobile_device_registered' event, and shows the "Control Phone" popup.
+  Future<void> _handleNostrControlPhone(String laptopDeviceId) async {
+    showToast('Starting phone as host — please wait...');
+
+    // Make sure the phone's screen-sharing service is actually armed before we
+    // publish the registration. If MediaProjection is missing or was canceled,
+    // the laptop can connect but receive no video.
+    try {
+      await gFFI.serverModel.startService();
+    } catch (e) {
+      showToast('Failed to start phone screen sharing: $e');
+      controller?.resumeCamera();
+      return;
+    }
+
+    // Listen for the fully populated host offer URI that Rust emits after ICE
+    // gathering completes. This is the URI the laptop-side reuse path needs.
+    String? phoneOfferUri;
+    final completer = Completer<String?>();
+
+    platformFFI.registerEventHandler(
+        'on_nostr_webrtc_offer_ready', '_scan_phone_host_offer', (evt) async {
+      if (!completer.isCompleted) {
+        completer.complete(evt['uri']);
+      }
+    });
+    platformFFI.registerEventHandler(
+        'on_nostr_webrtc_error', '_scan_phone_host_err', (evt) async {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+      }
+    });
+
+    try {
+      await bind.startNostrWebrtcHost();
+    } catch (e) {
+      platformFFI.unregisterEventHandler('on_nostr_webrtc_offer_ready', '_scan_phone_host_offer');
+      platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_scan_phone_host_err');
+      showToast('Failed to start phone host: $e');
+      controller?.resumeCamera();
+      return;
+    }
+
+    phoneOfferUri = await completer.future
+        .timeout(const Duration(seconds: 30), onTimeout: () => null);
+
+    platformFFI.unregisterEventHandler('on_nostr_webrtc_offer_ready', '_scan_phone_host_offer');
+    platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_scan_phone_host_err');
+
+    if (phoneOfferUri == null || phoneOfferUri.isEmpty) {
+      showToast('Failed to generate phone WebRTC offer. Please try again.');
+      controller?.resumeCamera();
+      return;
+    }
+
+    showToast('Publishing phone to laptop via Nostr...');
+    try {
+      await bind.publishNostrRegistration(
+        laptopDeviceId: laptopDeviceId,
+        phoneOfferUri: phoneOfferUri,
+      );
+      showToast('Done! Check the laptop — it should prompt you to control this phone.');
+    } catch (e) {
+      showToast('Failed to notify laptop: $e');
+      controller?.resumeCamera();
     }
   }
 
