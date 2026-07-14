@@ -303,27 +303,30 @@ impl Client {
 }
     #[cfg(feature = "webrtc")]
     if hbb_common::nostr_signaling::is_nostr_webrtc_uri(peer) {
-        log::info!("Nostr-WebRTC URI detected: {}", peer);
+        log::info!("[L6/CL] Nostr-WebRTC URI detected, calling WebRTCStream::new");
+        log::info!("[L6/CL] peer_uri_preview: {}", &peer.chars().take(80).collect::<String>());
 
-        return Ok((
-            (
-                Stream::WebRTC(
-                hbb_common::webrtc::WebRTCStream::new(
-                    peer,
+        let webrtc_result = hbb_common::webrtc::WebRTCStream::new(
+            peer,
+            false,
+            CONNECT_TIMEOUT,
+        )
+        .await;
+        match webrtc_result {
+            Ok(stream) => {
+                log::info!("[L6/CL] WebRTCStream::new succeeded (client connected)");
+                return Ok((
+                    (Stream::WebRTC(stream), true, None, None, "WebRTC"),
+                    (0, "".to_owned()),
                     false,
-                    CONNECT_TIMEOUT,
-                )
-                .await?,
-            ),
-            true,
-            None,
-            None,
-            "WebRTC",
-        ),
-        (0, "".to_owned()),
-        false,
-    ));
-}
+                ));
+            }
+            Err(e) => {
+                log::error!("[L6/CL] WebRTCStream::new FAILED: {}", e);
+                return Err(e);
+            }
+        }
+    }
     // to-do: remember the port for each peer, so that we can retry easier
         if hbb_common::is_ip_str(peer) {
             return Ok((

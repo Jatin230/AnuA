@@ -24,6 +24,11 @@ pub const DEFAULT_NOSTR_RELAYS: [&str; 2] = [
 ];
 
 static STARTED: AtomicBool = AtomicBool::new(false);
+/// Guards against spawning duplicate `run_host_webrtc_background` loops.
+/// Set `true` before spawning, reset to `false` when the loop exits.
+/// Checked by `generate_host_nostr_webrtc_uri` — if already running the
+/// function returns the URI immediately without spawning another loop.
+static HOST_RUNNING: AtomicBool = AtomicBool::new(false);
 /// Monotonically-increasing session counter. Each new call to
 /// `run_host_webrtc_background` increments this. `wait_for_webrtc_answer`
 /// checks whether the session it belongs to is still the current one,
@@ -44,10 +49,11 @@ lazy_static::lazy_static! {
     /// Optional factory callback invoked with the connected `WebRTCStream` after the
     /// handshake. Stored as an Arc so it survives multiple connection attempts.
     static ref HOST_SESSION_STARTER: Mutex<Option<SessionStarterFn>> = Default::default();
-    /// Caches the latest received answer and the time it was received, resolving the
-    /// race condition where the client publishes the answer while the host is still
-    /// busy publishing the offer.
-    static ref RECEIVED_ANSWER_CACHE: Mutex<Option<(std::time::Instant, String)>> = Default::default();
+    /// Caches the latest received answer and the session ID it was intended for,
+    /// resolving the race condition where the client publishes the answer while the
+    /// host is still busy publishing the offer.  The session ID is used to detect
+    /// stale answers from a previous session (different DTLS fingerprint).
+    static ref RECEIVED_ANSWER_CACHE: Mutex<Option<(u64, String)>> = Default::default();
     /// Registered callback to handle incoming device registrations over Nostr.
     static ref REGISTRATION_HANDLER: Mutex<Option<RegistrationHandlerFn>> = Default::default();
 }
@@ -108,6 +114,8 @@ pub fn ensure_started() {
         return;
     }
 
+    log::info!("[WS-LIFECYCLE] ensure_started() — spawning new relay runtime (previous one was exited)");
+
     // Initialize sodiumoxide for cryptographic operations (signing events)
     sodiumoxide::init().ok();
 
@@ -136,6 +144,7 @@ pub fn ensure_started() {
 
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
         *SHUTDOWN_TX.lock().unwrap() = Some(shutdown_tx);
+        log::info!("[WS-LIFECYCLE] new SHUTDOWN_TX installed, starting {} relay loops", DEFAULT_NOSTR_RELAYS.len());
         runtime.block_on(async move {
             for relay in DEFAULT_NOSTR_RELAYS {
                 let relay = relay.to_owned();
@@ -152,8 +161,12 @@ pub fn ensure_started() {
 }
 
 pub fn shutdown() {
+    log::info!("[WS-LIFECYCLE] shutdown() called — sending signal on SHUTDOWN_TX and clearing STARTED");
     if let Some(tx) = SHUTDOWN_TX.lock().unwrap().take() {
         let _ = tx.send(true);
+        log::info!("[WS-LIFECYCLE] shutdown() sent true on SHUTDOWN_TX (both relay loops will now exit)");
+    } else {
+        log::info!("[WS-LIFECYCLE] shutdown() called but SHUTDOWN_TX was already taken (relay loops already terminating)");
     }
     STARTED.store(false, Ordering::SeqCst);
 }
@@ -171,6 +184,11 @@ pub async fn publish_webrtc_offer(device_id: &str, sdp_or_endpoint: &str, sessio
 }
 
 pub async fn publish_webrtc_answer(device_id: &str, sdp_or_endpoint: &str) -> ResultType<()> {
+    // Ensure Nostr relays are running before publishing the answer.
+    // A previous WebRTC session's Connected/Disconnected handler may have called
+    // shutdown(), killing the relay loops. Restart them now so the answer reaches
+    // the remote peer (e.g. phone waiting for laptop's answer in "Control Phone" flow).
+    ensure_started();
     publish_signal(device_id, sdp_or_endpoint, "_answer", "answer", 0).await
 }
 
@@ -220,6 +238,20 @@ pub async fn generate_host_nostr_webrtc_uri() -> ResultType<String> {
     );
     // #endregion
 
+    // Guard: prevent duplicate background loops.  When a loop is already
+    // running it continuously publishes fresh WebRTC offers and waits for
+    // answers — spawning another would create resource leaks (OS threads,
+    // tokio runtimes) and the second loop would overwrite PENDING_ANSWER_TX
+    // causing the first to fail with "channel was dropped".
+    //
+    // The existing loop picks up new session starters and relay subscriptions
+    // via ensure_started() at the top of each iteration, so a duplicate loop
+    // is never needed.
+    if HOST_RUNNING.swap(true, Ordering::SeqCst) {
+        log::info!("Host WebRTC background loop already running; reusing existing loop");
+        return Ok(uri);
+    }
+
     // Assign a new session ID so that any previously-running background session
     // can detect it has been superseded and exit cleanly.
     let my_session_id = HOST_SESSION_ID.fetch_add(1, Ordering::SeqCst) + 1;
@@ -229,6 +261,17 @@ pub async fn generate_host_nostr_webrtc_uri() -> ResultType<String> {
     // dropped when that runtime exits, which can abort webrtc-rs mid-handshake and
     // crash the process (0xc0000409 in libanuvadini.dll).
     thread::spawn(move || {
+        // RAII guard: releases HOST_RUNNING on every exit path including panic unwind.
+        // Without this, a panic inside the closure or a thread::spawn failure would
+        // permanently lock out future Nostr WebRTC host loops.
+        struct ResetGuard;
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                HOST_RUNNING.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = ResetGuard;
+
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)
@@ -263,11 +306,21 @@ async fn run_host_webrtc_background(device_id: String, initial_session_id: u64) 
     // second scan attempt arrived after the first session had already completed.
     let mut my_session_id = initial_session_id;
     loop {
+        // Ensure Nostr relay subscriptions are alive.  The previous session's
+        // peer-connection-disconnect handler calls `shutdown()`, which kills the
+        // relay-loops.  Without this restart the answer from the next offer can
+        // never be received, causing a 120 s timeout death spiral.
+        ensure_started();
+
         // Clear any cached peer connections so we get a fresh DTLS certificate.
         // Without this the SDP fingerprint is identical every session → same Nostr
         // event content → relay returns "duplicate: have this event" and the phone
         // fetches a stale offer that doesn't match the new peer.
         crate::webrtc::clear_host_sessions().await;
+
+        // The received-answer cache is session-aware: wait_for_webrtc_answer
+        // checks that the cached session_id matches, so stale answers from
+        // a previous session are automatically ignored.
 
         match crate::webrtc::WebRTCStream::new("", false, 30_000).await {
             Ok(stream) => match stream.get_local_endpoint().await {
@@ -308,26 +361,27 @@ async fn run_host_webrtc_background(device_id: String, initial_session_id: u64) 
                     }
                     .to_uri();
                     if let Some(tx) = OFFER_URI_TX.lock().unwrap().as_ref() {
+                        log::info!("[P5] Sending offer_uri to OFFER_URI_TX (session {}, device {})", my_session_id, device_id);
                         let _ = tx.send(offer_uri);
+                    } else {
+                        log::warn!("[P5] OFFER_URI_TX not registered; offer_uri not delivered (session {}, device {})", my_session_id, device_id);
                     }
 
-                    match wait_for_webrtc_answer(120_000, my_session_id).await {
+                    match wait_for_webrtc_answer(60_000, my_session_id).await {
                         Ok(answer_endpoint) => {
-                            log::info!("Received WebRTC answer from client via Nostr");
+                            log::info!("[HD] Received WebRTC answer from client (session {}, device {})", my_session_id, device_id);
                             if let Err(err) = stream.set_remote_endpoint(&answer_endpoint).await {
-                                log::error!("Failed to apply client WebRTC answer: {}", err);
+                                log::error!("[HD] Failed to apply client WebRTC answer: {}", err);
                             } else {
-                                log::info!("WebRTC handshake complete for device {}", device_id);
+                                log::info!("[HD] WebRTC handshake complete for device {}", device_id);
                                 // Start the Anuvadini server session on the WebRTC stream.
-                                // Clone the Arc so the factory remains registered for future connections.
                                 let starter_opt = HOST_SESSION_STARTER.lock().unwrap().clone();
                                 if let Some(starter) = starter_opt {
+                                    log::info!("[HD] Starting server session on WebRTC stream (session {})", my_session_id);
                                     starter(stream).await;
-                                    log::info!("WebRTC server session completed; looping for next connection");
+                                    log::info!("[HD] WebRTC server session completed; looping for next connection");
                                 } else {
-                                    // No session starter registered — keep the stream alive
-                                    // so the peer connection isn't dropped prematurely.
-                                    log::warn!("No host session starter registered; stream will idle");
+                                    log::warn!("[HD] No host session starter registered; stream will idle");
                                     std::future::pending::<()>().await;
                                 }
                             }
@@ -381,18 +435,15 @@ pub async fn wait_for_webrtc_answer(
     timeout_ms: u64,
     my_session_id: u64,
 ) -> ResultType<String> {
-    // Check if we have a recently cached answer from the last 30 seconds
+    // Check if we have a cached answer from the same session
     {
         let mut cache = RECEIVED_ANSWER_CACHE.lock().unwrap();
-        log::info!("DEBUG: wait_for_webrtc_answer checking RECEIVED_ANSWER_CACHE, is_some={}", cache.is_some());
-        if let Some((timestamp, content)) = cache.take() {
-            let age_ms = timestamp.elapsed().as_millis();
-            log::info!("DEBUG: found cached answer in RECEIVED_ANSWER_CACHE, age={} ms", age_ms);
-            if timestamp.elapsed() < Duration::from_secs(30) {
-                log::info!("DEBUG: found valid cached answer in RECEIVED_ANSWER_CACHE ({} ms old)", age_ms);
+        if let Some((cached_session_id, content)) = cache.take() {
+            if cached_session_id == my_session_id {
+                log::info!("DEBUG: found valid cached answer for session {} in RECEIVED_ANSWER_CACHE", my_session_id);
                 return Ok(content);
             } else {
-                log::warn!("DEBUG: cached answer was too old ({} ms)", age_ms);
+                log::info!("DEBUG: cached answer was for session {}, not our session {}; ignoring", cached_session_id, my_session_id);
             }
         }
     }
@@ -461,14 +512,16 @@ fn handle_relay_message(text: &str) {
     }
 
     if has_answer_tag {
-        log::info!("Nostr relay: received WebRTC answer endpoint for device {}", device_id);
+        log::info!("[P9] Nostr relay: received WebRTC answer endpoint for device {}", device_id);
+        let endpoint_preview: String = content.chars().take(60).collect();
         let mut guard = PENDING_ANSWER_TX.lock().unwrap();
         if let Some(tx) = guard.take() {
-            log::info!("DEBUG: delivering answer to waiting host task");
+            log::info!("[P9] Delivering answer to waiting host task (preview: {}...)", endpoint_preview);
             let _ = tx.send(content);
         } else {
-            log::info!("DEBUG: no waiting host task found, caching answer in RECEIVED_ANSWER_CACHE");
-            *RECEIVED_ANSWER_CACHE.lock().unwrap() = Some((std::time::Instant::now(), content));
+            let session_id = HOST_SESSION_ID.load(Ordering::SeqCst);
+            log::info!("[P9] No waiting host task found, caching answer for session {} in RECEIVED_ANSWER_CACHE (preview: {}...)", session_id, endpoint_preview);
+            *RECEIVED_ANSWER_CACHE.lock().unwrap() = Some((session_id, content));
         }  
     } else if has_reg_tag {
         log::info!("Nostr relay: received WebRTC registration signal for device {}", device_id);
@@ -505,9 +558,10 @@ fn handle_relay_message(text: &str) {
 
 async fn relay_background_loop(relay: String, shutdown: &mut watch::Receiver<bool>) {
     loop {
+        log::info!("[WS-LIFECYCLE] relay {} connecting...", relay);
         match crate::websocket::WsFramedStream::new(&relay, None, None, 15_000).await {
             Ok(mut stream) => {
-                log::info!("Connected Nostr relay: {}", relay);
+                log::info!("[WS-LIFECYCLE] connected relay {}", relay);
 
                 let device_id = Config::get_id().replace(' ', "");
                 let answer_tag = format!("{}_answer", device_id);
@@ -516,7 +570,7 @@ async fn relay_background_loop(relay: String, shutdown: &mut watch::Receiver<boo
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs()
-                    .saturating_sub(30); // look back only 30 s
+                    .saturating_sub(120); // look back up to 2 min so reconnections don't miss phone registrations
                 let req = json!([
                     "REQ",
                     "sub_webrtc_signals",
@@ -524,7 +578,6 @@ async fn relay_background_loop(relay: String, shutdown: &mut watch::Receiver<boo
                         "kinds": [10005],
                         "#t": [answer_tag, reg_tag],
                         "since": since_ts,
-                        "limit": 10
                     }
                 ]);
                 if let Ok(req_str) = serde_json::to_string(&req) {
@@ -541,7 +594,7 @@ async fn relay_background_loop(relay: String, shutdown: &mut watch::Receiver<boo
                     tokio::select! {
                         changed = shutdown.changed() => {
                             if changed.is_ok() {
-                                log::info!("Shutting down Nostr relay loop: {}", relay);
+                                log::info!("[WS-LIFECYCLE] relay {} close: shutdown signal received (will return)", relay);
                             }
                             return;
                         }
@@ -549,25 +602,32 @@ async fn relay_background_loop(relay: String, shutdown: &mut watch::Receiver<boo
                             match message {
                                 Some(Ok(bytes)) => {
                                     if let Ok(text) = std::str::from_utf8(&bytes) {
+                                        let preview: String = text.chars().take(120).collect();
+                                        log::debug!("[WS-MSG] relay received: {}", preview);
                                         handle_relay_message(text);
                                     }
                                     continue;
                                 }
                                 Some(Err(err)) => {
-                                    log::warn!("Nostr relay {} closed with error: {}", relay, err);
+                                    log::warn!("[WS-LIFECYCLE] relay {} close: stream error -> {}", relay, err);
                                     break;
                                 }
-                                None => continue,
+                                None => {
+                                    log::warn!("[WS-LIFECYCLE] relay {} close: next_timeout returned None (close frame / timeout / stream exhausted)", relay);
+                                    break;
+                                }
                             }
                         }
                     }
                 }
+                log::info!("[WS-LIFECYCLE] relay {} disconnected (inner loop broken), will reconnect", relay);
             }
             Err(err) => {
-                log::warn!("Failed to connect Nostr relay {}: {}", relay, err);
+                log::warn!("[WS-LIFECYCLE] relay {} connect FAILED: {} (will retry)", relay, err);
             }
         }
 
+        log::info!("[WS-LIFECYCLE] relay {} waiting 5s before reconnect", relay);
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
@@ -588,16 +648,21 @@ async fn publish_signal(
             return Err(err);
         }
     };
-    let mut success_count = 0usize;
+    let results = futures::future::join_all(
+        DEFAULT_NOSTR_RELAYS.iter().map(|relay| {
+            let event = event.clone();
+            async move {
+                let result = publish_event_to_relay(relay, &event).await;
+                (relay, result)
+            }
+        }),
+    )
+    .await;
 
-    for relay in DEFAULT_NOSTR_RELAYS {
-        match publish_event_to_relay(relay, &event).await {
-            Ok(()) => {
-                success_count += 1;
-            }
-            Err(err) => {
-                log::warn!("Failed to publish WebRTC {label} to {}: {}", relay, err);
-            }
+    let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
+    for (relay, result) in &results {
+        if let Err(err) = result {
+            log::warn!("Failed to publish WebRTC {label} to {}: {}", relay, err);
         }
     }
 
@@ -665,10 +730,14 @@ async fn publish_event_to_relay(relay: &str, event_json: &str) -> ResultType<()>
 
     let client_config = crate::verifier::client_config(false)?;
     let connector = Connector::Rustls(Arc::new(client_config));
-    let (mut stream, _) = tokio_tungstenite::connect_async_tls_with_config(
-        relay, None, false, Some(connector),
+    let (mut stream, _) = tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio_tungstenite::connect_async_tls_with_config(
+            relay, None, false, Some(connector),
+        ),
     )
-    .await?;
+    .await
+    .map_err(|_| anyhow!("Timed out connecting to relay after 10s"))??;
     let event_value: serde_json::Value = serde_json::from_str(event_json)?;
     let payload = serde_json::to_string(&json!(["EVENT", event_value]))?;
     stream.send(WsMessage::Text(payload.into())).await?;
@@ -677,8 +746,50 @@ async fn publish_event_to_relay(relay: &str, event_json: &str) -> ResultType<()>
     // connection open indefinitely after receiving an EVENT; without a
     // timeout this function would hang forever and never return.
     let reply = tokio::time::timeout(Duration::from_secs(10), stream.next()).await;
-    if let Ok(Some(Ok(WsMessage::Text(text)))) = reply {
-        log::debug!("Relay {} replied: {}", relay, text);
+    match reply {
+        Ok(Some(Ok(WsMessage::Text(text)))) => {
+            if let Ok(serde_json::Value::Array(arr)) = serde_json::from_str(&text) {
+                if arr.len() >= 4
+                    && arr[0].as_str() == Some("OK")
+                    && arr[2].as_bool() == Some(true)
+                {
+                    log::info!("[publish] Relay {} ACCEPTED event: {}", relay, text);
+                } else if arr.len() >= 4
+                    && arr[0].as_str() == Some("OK")
+                    && arr[2].as_bool() == Some(false)
+                {
+                    log::warn!("[publish] Relay {} REJECTED event: {}", relay, text);
+                } else {
+                    log::debug!("[publish] Relay {} replied (unexpected format): {}", relay, text);
+                }
+            } else {
+                log::debug!("[publish] Relay {} replied (non-JSON): {}", relay, text);
+            }
+        }
+        Ok(Some(Ok(WsMessage::Binary(_)))) => {
+            log::debug!("[publish] Relay {} replied with binary (ignored)", relay);
+        }
+        Ok(Some(Ok(WsMessage::Ping(_)))) => {
+            log::debug!("[publish] Relay {} replied with Ping (ignored)", relay);
+        }
+        Ok(Some(Ok(WsMessage::Pong(_)))) => {
+            log::debug!("[publish] Relay {} replied with Pong (ignored)", relay);
+        }
+        Ok(Some(Ok(WsMessage::Close(_)))) => {
+            log::debug!("[publish] Relay {} replied with Close (ignored)", relay);
+        }
+        Ok(Some(Ok(WsMessage::Frame(_)))) => {
+            log::debug!("[publish] Relay {} replied with Frame (ignored)", relay);
+        }
+        Ok(Some(Err(e))) => {
+            log::warn!("[publish] Relay {} stream error: {}", relay, e);
+        }
+        Ok(None) => {
+            log::warn!("[publish] Relay {} closed stream without response", relay);
+        }
+        Err(_) => {
+            log::warn!("[publish] Relay {} timed out after 10s", relay);
+        }
     }
 
     Ok(())

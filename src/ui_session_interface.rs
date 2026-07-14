@@ -420,6 +420,18 @@ impl<T: InvokeUiSession> Session<T> {
             && self.lc.read().unwrap().enable_file_copy_paste.v
     }
 
+    /// Send a lightweight keep-alive ping to the remote peer.
+    /// This keeps the data channel active and prevents the remote device
+    /// from going to sleep while the session is connected.
+    #[cfg(feature = "flutter")]
+    pub fn keep_awake(&self) {
+        let mut msg_out = Message::new();
+        msg_out.set_test_delay(TestDelay {
+            ..Default::default()
+        });
+        self.send(Data::Message(msg_out));
+    }
+
     #[cfg(feature = "flutter")]
     pub fn refresh_video(&self, display: i32) {
         if crate::common::is_support_multi_ui_session_num(self.lc.read().unwrap().version) {

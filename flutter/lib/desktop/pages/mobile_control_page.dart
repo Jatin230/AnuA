@@ -36,6 +36,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
   final Map<String, FFI> _activeSessions = {};
   final Map<String, String> _sessionStatus = {};
   bool _sidebarExpanded = true;
+  final Set<String> _preAuthorizedPeerIds = {};
 
   bool _serverReady = false;
   bool _rustAlive = false;
@@ -52,6 +53,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
     unawaited(_ensureDirectServerEnabled());
     _generateConnectionUrl();
     _startListenerProbe();
+    gFFI.serverModel.addListener(_onServerModelChanged);
   }
 
   /// The Rust backend may emit direct_server_status before this page opens.
@@ -103,6 +105,8 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
   @override
   void dispose() {
+    gFFI.serverModel.removeListener(_onServerModelChanged);
+    _keepAwakeTimer?.cancel();
     _nostrWatchdog?.cancel();
     _nostrAutoRefresh?.cancel();
     _listenerProbe?.cancel();
@@ -113,6 +117,18 @@ class _MobileControlPageState extends State<MobileControlPage> {
     }
     _activeSessions.clear();
     super.dispose();
+  }
+
+  void _onServerModelChanged() {
+    // Auto-authorize any pre-authorized peer that just connected as a CM client.
+    for (final peerId in _preAuthorizedPeerIds.toList()) {
+      final client = gFFI.serverModel.clients.firstWhereOrNull(
+          (c) => c.peerId == peerId && !c.authorized && !c.disconnected);
+      if (client != null) {
+        bind.cmLoginRes(connId: client.id, res: true);
+        _preAuthorizedPeerIds.remove(peerId);
+      }
+    }
   }
 
   void _setupEventListener() {
@@ -147,10 +163,25 @@ class _MobileControlPageState extends State<MobileControlPage> {
         'mobile_device_registered', 'mobile_control_page', (evt) async {
       try {
         final device = Map<String, String>.from(json.decode(evt['data']));
+        print('L1: mobile_device_registered: ${device['name']} ${device['id']} ip=${device['ip']?.isNotEmpty}');
+        agentDebugLog('L1', 'mobile_control_page.dart:mobile_device_registered',
+            'registration received', {
+          'name': device['name'],
+          'id': device['id'],
+          'hasIp': device['ip']?.isNotEmpty,
+          'isNostr': device['ip']?.startsWith('nostr-webrtc://'),
+          'hasPassword': (device['temp_password'] ?? '').isNotEmpty,
+          'ts': DateTime.now().millisecondsSinceEpoch,
+        });
         if (!mounted) return;
         final key = _deviceKey(device);
         final status = _sessionStatus[key];
         if (_activeSessions.containsKey(key) || status == 'Connecting' || status == 'Connected') {
+          return;
+        }
+        // Guard against duplicate registration events (phone sends ANUVADINI_HELLO
+        // via both direct TCP and Nostr relay, causing two overlapping dialogs).
+        if (_registeredDevices.any((d) => _deviceKey(d) == key)) {
           return;
         }
         setState(() {
@@ -188,6 +219,15 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
   void _showDeviceActionDialog(Map<String, String> device) {
     final hasPassword = (device['temp_password'] ?? '').isNotEmpty;
+    print('L2: _showDeviceActionDialog: ${device['name']} ${device['id']} hasPassword=$hasPassword');
+    agentDebugLog('L2', 'mobile_control_page.dart:_showDeviceActionDialog',
+        'action dialog shown', {
+      'name': device['name'],
+      'id': device['id'],
+      'hasPassword': hasPassword,
+      'isNostr': device['ip']?.startsWith('nostr-webrtc://'),
+      'ts': DateTime.now().millisecondsSinceEpoch,
+    });
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -870,6 +910,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
     setState(() => _sessionStatus[key] = 'Connecting');
 
     // #region agent log
+    print('L2: _connectDevice start: ip=$ip key=$key');
     agentDebugLog('L2', 'mobile_control_page.dart:_connectDevice', 'connect start', {
       'ip': ip,
       'key': key,
@@ -891,6 +932,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
       ffi.dialogManager.setOverlayState(_overlayKeyState);
       // #region agent log
+      print('L3: _connectDevice overlay attached: ip=$ip overlayReady=${_overlayKeyState.state != null}');
       agentDebugLog('L3', 'mobile_control_page.dart:_connectDevice', 'overlay attached', {
         'ip': ip,
         'overlayReady': _overlayKeyState.state != null,
@@ -906,6 +948,12 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
       // Mark as Connected when the first decoded frame arrives.
       ffi.imageModel.addCallbackOnFirstImage((_) {
+        print('L8: firstImage: key=$key connectionId=$connectionId');
+        agentDebugLog('L8', 'mobile_control_page.dart:firstImage', 'first decoded frame arrived', {
+          'key': key,
+          'connectionId': connectionId,
+          'ts': DateTime.now().millisecondsSinceEpoch,
+        });
         _imageTimeout?.cancel();
         if (mounted) setState(() => _sessionStatus[key] = 'Connected');
       });
@@ -916,6 +964,15 @@ class _MobileControlPageState extends State<MobileControlPage> {
       // would break all other active sessions.
       // Use the phone's temporary password so the login is auto-authorized.
       final tempPwd = device['temp_password'] ?? '';
+      print('L4: _connectDevice ffi.start about to call: connectionId=$connectionId hasPassword=${tempPwd.isNotEmpty} sessionId=${ffi.sessionId}');
+      agentDebugLog('L4', 'mobile_control_page.dart:_connectDevice', 'ffi.start about to call', {
+        'connectionId': connectionId,
+        'hasPassword': tempPwd.isNotEmpty,
+        'nostrMode': connectionId.startsWith('nostr-webrtc://') ? 'control' : null,
+        'sessionId': ffi.sessionId.toString(),
+        'key': key,
+        'ts': DateTime.now().millisecondsSinceEpoch,
+      });
       if (tempPwd.isNotEmpty) {
         ffi.start(
           connectionId,
@@ -929,10 +986,17 @@ class _MobileControlPageState extends State<MobileControlPage> {
           nostrMode: connectionId.startsWith('nostr-webrtc://') ? 'control' : null,
         );
       }
+      print('L4: _connectDevice ffi.start returned: connectionId=$connectionId sessionId=${ffi.sessionId}');
+      agentDebugLog('L4', 'mobile_control_page.dart:_connectDevice', 'ffi.start returned', {
+        'connectionId': connectionId,
+        'sessionId': ffi.sessionId.toString(),
+        'ts': DateTime.now().millisecondsSinceEpoch,
+      });
 
       setState(() {
         _activeSessions[key] = ffi;
       });
+      _startKeepAwake();
       showToast(ip.startsWith('nostr-webrtc://')
           ? 'Connecting...'
           : 'Connecting to $ip...');
@@ -953,14 +1017,29 @@ class _MobileControlPageState extends State<MobileControlPage> {
   }
 
   Timer? _imageTimeout;
+  Timer? _keepAwakeTimer;
+
+  void _startKeepAwake() {
+    _keepAwakeTimer?.cancel();
+    _keepAwakeTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted || _activeSessions.isEmpty) return;
+      for (final entry in _activeSessions.entries) {
+        final ffi = entry.value;
+        if (!ffi.closed && ffi.id.isNotEmpty) {
+          try {
+            bind.sessionKeepAwake(sessionId: ffi.sessionId);
+          } catch (_) {}
+        }
+      }
+    });
+  }
 
   Future<void> _disconnectDevice(Map<String, String> device) async {
     final key = _deviceKey(device);
     final ffi = _activeSessions[key];
     if (ffi == null) return;
 
-    final ip = device['ip'];
-    final connectionId = 'direct-tcp:${ip}_port_21118';
+    final connectionId = ffi.id;
     removeSharedStates(connectionId);
 
     await ffi.close();
@@ -969,6 +1048,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
       _activeSessions.remove(key);
       _sessionStatus[key] = 'Disconnected';
     });
+    if (_activeSessions.isEmpty) _keepAwakeTimer?.cancel();
   }
 
   void _authorizePhone(String id) {
@@ -979,7 +1059,23 @@ class _MobileControlPageState extends State<MobileControlPage> {
         }
       }
     });
-    showToast('Phone $id is now authorized to control this laptop.');
+    // Find the phone's pending client session in the CM and authorize it.
+    // The phone connects as a RustDesk client with peer_id matching its id.
+    try {
+      final client = gFFI.serverModel.clients.firstWhereOrNull(
+          (c) => c.peerId == id && !c.authorized && !c.disconnected);
+      if (client != null) {
+        bind.cmLoginRes(connId: client.id, res: true);
+        showToast('Phone $id is now authorized to control this laptop.');
+      } else {
+        // No pending client session yet — the phone may connect later.
+        // Mark this device so the next CM add_connection auto-authorizes.
+        _preAuthorizedPeerIds.add(id);
+        showToast('Phone $id will be authorized when it connects.');
+      }
+    } catch (e) {
+      showToast('Authorize error: $e');
+    }
   }
 }
 

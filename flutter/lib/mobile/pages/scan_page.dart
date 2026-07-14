@@ -75,7 +75,7 @@ class _ScanPageState extends State<ScanPage> {
       if (scanData.code != null) {
         controller.pauseCamera();
         showServerSettingFromQr(scanData.code!).then((_) {}).catchError((e) {
-          debugPrint('showServerSettingFromQr error: $e');
+          print('showServerSettingFromQr error: $e');
           showToast('Error: $e');
         });
       }
@@ -344,7 +344,9 @@ class _ScanPageState extends State<ScanPage> {
     });
 
     try {
+      print('P1: _handleNostrControlPhone: about to call startNostrWebrtcHost');
       await bind.startNostrWebrtcHost();
+      print('P2: _handleNostrControlPhone: startNostrWebrtcHost returned');
     } catch (e) {
       platformFFI.unregisterEventHandler('on_nostr_webrtc_offer_ready', '_scan_phone_host_offer');
       platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_scan_phone_host_err');
@@ -353,8 +355,10 @@ class _ScanPageState extends State<ScanPage> {
       return;
     }
 
+    print('P3: _handleNostrControlPhone: awaiting offer URI');
     phoneOfferUri = await completer.future
-        .timeout(const Duration(seconds: 30), onTimeout: () => null);
+        .timeout(const Duration(seconds: 45), onTimeout: () => null);
+    print('P4: _handleNostrControlPhone: offer URI received: $phoneOfferUri');
 
     platformFFI.unregisterEventHandler('on_nostr_webrtc_offer_ready', '_scan_phone_host_offer');
     platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_scan_phone_host_err');
@@ -367,10 +371,12 @@ class _ScanPageState extends State<ScanPage> {
 
     showToast('Publishing phone to laptop via Nostr...');
     try {
+      print('P7: _handleNostrControlPhone: about to call publishNostrRegistration');
       await bind.publishNostrRegistration(
         laptopDeviceId: laptopDeviceId,
         phoneOfferUri: phoneOfferUri,
       );
+      print('P8: _handleNostrControlPhone: publishNostrRegistration returned');
       showToast('Done! Check the laptop — it should prompt you to control this phone.');
     } catch (e) {
       showToast('Failed to notify laptop: $e');
@@ -406,8 +412,18 @@ class _ScanPageState extends State<ScanPage> {
         break;
       }
 
-      // Send registration message
-      socket.write('ANUVADINI_HELLO:$deviceName:$myIp\n');
+      String tempPassword = '';
+      try {
+        tempPassword = await bind.mainGetTemporaryPassword();
+      } catch (_) {}
+      if (tempPassword.isEmpty) {
+        try {
+          tempPassword = await bind.mainGetPermanentPassword();
+        } catch (_) {}
+      }
+
+      // Send registration message — format: ANUVADINI_HELLO:<name>:<myIp>:<tempPwd>
+      socket.write('ANUVADINI_HELLO:$deviceName:$myIp:$tempPassword\n');
       await socket.flush();
 
       // Wait for acknowledgment (up to 4 s)

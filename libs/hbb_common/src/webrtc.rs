@@ -8,11 +8,14 @@ use webrtc::api::setting_engine::{SettingEngine, SctpMaxMessageSize};
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice::mdns::MulticastDnsMode;
+use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
+use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::peer_connection::signaling_state::RTCSignalingState;
 use webrtc::peer_connection::RTCPeerConnection;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -270,34 +273,43 @@ impl WebRTCStream {
         force_relay: bool,
         ms_timeout: u64,
     ) -> ResultType<Self> {
-        log::info!("WebRTCStream::new entered, endpoint len={}", remote_endpoint.len());
-        log::info!("WebRTCStream::new first 80 chars: {}", &remote_endpoint.chars().take(80).collect::<String>());
+        log::info!("[L6/WR] WebRTCStream::new entered, endpoint_len={}", remote_endpoint.len());
         let (signal_device_id, remote_offer) = if remote_endpoint.is_empty() {
-            log::info!("WebRTCStream::new: empty endpoint, will create local offer (host mode)");
+            log::info!("[L6/WR] empty endpoint -> host mode (create local offer)");
             (None, "".into())
         } else {
             match Self::parse_remote_signal_endpoint(remote_endpoint) {
                 Ok(result) => {
-                    log::info!("WebRTCStream::new: parsed endpoint, has_device_id={}, offer_len={}",
+                    log::info!("[L6/WR] parsed remote endpoint, has_device_id={}, offer_len={} [CLIENT PATH]",
                         result.0.is_some(), result.1.len());
                     result
                 }
                 Err(e) => {
-                    log::error!("WebRTCStream::new: parse_remote_signal_endpoint failed: {}", e);
+                    log::error!("[L6/WR] parse_remote_signal_endpoint failed: {}", e);
                     return Err(e);
                 }
             }
         };
 
         let mut key = Self::get_key_for_sdp_json(&remote_offer)?;
-        let sessions_lock = SESSIONS.lock().await;
-        if let Some(cached_stream) = sessions_lock.get(&key) {
-            if !key.is_empty() {
-                log::debug!("Start webrtc with cached peer");
-                return Ok(cached_stream.clone());
+        if !key.is_empty() {
+            let mut drop_stale = false;
+            {
+                let sessions_lock = SESSIONS.lock().await;
+                if let Some(cached_stream) = sessions_lock.get(&key) {
+                    let state = cached_stream.pc.connection_state();
+                    if state == RTCPeerConnectionState::Connecting || state == RTCPeerConnectionState::Connected {
+                        log::debug!("Start webrtc with cached peer (state={:?})", state);
+                        return Ok(cached_stream.clone());
+                    }
+                    log::warn!("Removing cached WebRTC session with bad state {:?} (key={})", state, key);
+                    drop_stale = true;
+                }
+            }
+            if drop_stale {
+                SESSIONS.lock().await.remove(&key);
             }
         }
-        drop(sessions_lock);
 
         let start_local_offer = remote_offer.is_empty();
         // Create a SettingEngine and enable Detach
@@ -331,7 +343,7 @@ impl WebRTCStream {
             // Create a data channel with label "bootstrap"
             let dc = pc.create_data_channel("bootstrap", None).await?;
             dc.on_open(Box::new(move || {
-                log::debug!("Local data channel bootstrap open.");
+                log::info!("[DC/HOST] Local data channel bootstrap open.");
                 let _ = dc_open_notify.send(true);
                 Box::pin(async {})
             }));
@@ -357,12 +369,34 @@ impl WebRTCStream {
                     *stream_lock = dc.clone();
                     drop(stream_lock);
                     dc.on_open(Box::new(move || {
+                        log::info!("[DC/CLIENT] Remote data channel ({}) open.", d_label);
                         let _ = dc_open_notify2.send(true);
                         Box::pin(async {})
                     }));
                 })
             }));
         }
+
+        // ICE connection state — critical for diagnosing "stuck at checking" failures
+        pc.on_ice_connection_state_change(Box::new(move |s: RTCIceConnectionState| {
+            Box::pin(async move {
+                log::info!("[L7/WR] ICE connection state: {:?}", s);
+            })
+        }));
+
+        // ICE gathering state — detects when gathering completes or fails
+        pc.on_ice_gathering_state_change(Box::new(move |s: RTCIceGathererState| {
+            Box::pin(async move {
+                log::info!("[L7/WR] ICE gatherer state: {:?}", s);
+            })
+        }));
+
+        // Signaling state — offer/answer flow completion
+        pc.on_signaling_state_change(Box::new(move |s: RTCSignalingState| {
+            Box::pin(async move {
+                log::info!("[L7/WR] Signaling state: {:?}", s);
+            })
+        }));
 
         // This will notify you when the peer has connected/disconnected
         let stream_for_close = stream.clone();
@@ -372,14 +406,18 @@ impl WebRTCStream {
             let on_connection_notify = notify_tx.clone();
             let pc_for_close2 = pc_for_close.clone();
             Box::pin(async move {
-                log::debug!("WebRTC session peer connection state: {}", s);
+                log::info!("[L7/WR] WebRTC peer connection state: {:?}", s);
                 match s {
                     RTCPeerConnectionState::Connected => {
-                        crate::nostr_signaling::shutdown();
+                        // Do NOT call shutdown() here. The client (laptop) may still
+                        // need Nostr relay to publish its WebRTC answer back to the phone.
+                        // Shutdown is only safe after the session ends (Disconnected/Failed/Closed).
+                        log::info!("[WS-LIFECYCLE] WebRTC Connected — relay kept alive until session ends.");
                     }
                     RTCPeerConnectionState::Disconnected
                     | RTCPeerConnectionState::Failed
                     | RTCPeerConnectionState::Closed => {
+                        log::info!("[WS-LIFECYCLE] WebRTC {:?} -> calling shutdown() (cleaning up relay subscriptions)", s);
                         crate::nostr_signaling::shutdown();
                         let _ = on_connection_notify.send(true);
                         log::debug!("WebRTC session closing due to disconnected");
@@ -459,29 +497,29 @@ impl WebRTCStream {
                 return Err(anyhow::anyhow!("Local desc is not set"));
             }
         } else {
-            log::info!("WebRTCStream::new: processing remote offer (client/answerer path)");
+            log::info!("[L6/CL] processing remote offer (client/answerer path)");
             let sdp = match serde_json::from_str::<RTCSessionDescription>(&remote_offer) {
                 Ok(s) => s,
                 Err(e) => {
-                    log::error!("WebRTCStream::new: failed to parse remote offer SDP: {}", e);
+                    log::error!("[L6/CL] failed to parse remote offer SDP: {}", e);
                     return Err(e.into());
                 }
             };
-            log::info!("WebRTCStream::new: setting remote description");
+            log::info!("[L6/CL] setting remote description from offer");
             if let Err(e) = pc.set_remote_description(sdp.clone()).await {
-                log::error!("WebRTCStream::new: set_remote_description failed: {}", e);
+                log::error!("[L6/CL] set_remote_description failed: {}", e);
                 return Err(e.into());
             }
-            log::info!("WebRTCStream::new: creating WebRTC answer");
+            log::info!("[L6/CL] creating WebRTC answer");
             let answer = match pc.create_answer(None).await {
                 Ok(a) => a,
                 Err(e) => {
-                    log::error!("WebRTCStream::new: create_answer failed: {}", e);
+                    log::error!("[L6/CL] create_answer failed: {}", e);
                     return Err(e.into());
                 }
             };
             let mut gather_complete = pc.gathering_complete_promise().await;
-            log::info!("WebRTCStream::new: setting local description (answer)");
+            log::info!("[L6/CL] setting local description (answer)");
             if let Err(e) = pc.set_local_description(answer).await {
                 log::error!("WebRTCStream::new: set_local_description failed: {}", e);
                 return Err(e.into());
@@ -498,22 +536,22 @@ impl WebRTCStream {
             if let Some(local_desc) = pc.local_description().await {
                 let local_endpoint = Self::sdp_to_endpoint(&serde_json::to_string(&local_desc)?);
                 if let Some(device_id) = signal_device_id {
-                    log::info!("WebRTCStream::new: spawning publish_webrtc_answer for device {}", device_id);
+                    log::info!("[L6/CL] spawning publish_webrtc_answer for device_id={}", device_id);
                     tokio::spawn(async move {
-                        log::info!("publish_webrtc_answer task started for device {}", device_id);
+                        log::info!("[L6/CL] publish_webrtc_answer task started for {}", device_id);
                         if let Err(err) = crate::nostr_signaling::publish_webrtc_answer(
                             &device_id,
                             &local_endpoint,
                         )
                         .await
                         {
-                            log::warn!("Failed to publish WebRTC answer: {}", err);
+                            log::warn!("[L6/CL] Failed to publish WebRTC answer: {}", err);
                         } else {
-                            log::info!("WebRTC answer published successfully to Nostr for device {}", device_id);
+                            log::info!("[L6/CL] WebRTC answer published to Nostr for {}", device_id);
                         }
                     });
                 } else {
-                    log::info!("WebRTCStream::new: no signal_device_id (no nostr link), skipping publish");
+                    log::info!("[L6/CL] no signal_device_id, skipping publish");
                 }
             }
         }
@@ -549,11 +587,19 @@ impl WebRTCStream {
 
     #[inline]
     pub async fn set_remote_endpoint(&self, endpoint: &str) -> ResultType<()> {
-        let offer = Self::get_remote_offer(endpoint)?;
-        log::debug!("WebRTC set remote sdp: {}", offer);
-        let sdp = serde_json::from_str::<RTCSessionDescription>(&offer)?;
-        self.pc.set_remote_description(sdp).await?;
-        Ok(())
+        let sdp_raw = Self::get_remote_offer(endpoint)?;
+        let sdp = serde_json::from_str::<RTCSessionDescription>(&sdp_raw)?;
+        log::info!("[L6/HD] set_remote_description sdp_type={:?} sdp_len={}", sdp.sdp_type, sdp_raw.len());
+        match self.pc.set_remote_description(sdp).await {
+            Ok(_) => {
+                log::info!("[L6/HD] set_remote_description succeeded");
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("[L6/HD] set_remote_description FAILED: {}", e);
+                Err(e.into())
+            }
+        }
     }
 
     #[inline]

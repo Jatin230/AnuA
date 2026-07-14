@@ -129,6 +129,10 @@ abstract class anuvadini {
 
   FlutterRustBridgeTaskConstMeta get kSessionRefreshConstMeta;
 
+  Future<void> sessionKeepAwake({required UuidValue sessionId, dynamic hint});
+
+  FlutterRustBridgeTaskConstMeta get kSessionKeepAwakeConstMeta;
+
   Future<void> sessionTakeScreenshot(
       {required UuidValue sessionId, required int display, dynamic hint});
 
@@ -2174,6 +2178,25 @@ class AnuvadiniImpl implements anuvadini {
       const FlutterRustBridgeTaskConstMeta(
         debugName: "session_refresh",
         argNames: ["sessionId", "display"],
+      );
+
+  Future<void> sessionKeepAwake(
+      {required UuidValue sessionId, dynamic hint}) {
+    var arg0 = _platform.api2wire_Uuid(sessionId);
+    return _platform.executeNormal(FlutterRustBridgeTask(
+      callFfi: (port_) =>
+          _platform.inner.wire_session_keep_awake(port_, arg0),
+      parseSuccessData: _wire2api_unit,
+      constMeta: kSessionKeepAwakeConstMeta,
+      argValues: [sessionId],
+      hint: hint,
+    ));
+  }
+
+  FlutterRustBridgeTaskConstMeta get kSessionKeepAwakeConstMeta =>
+      const FlutterRustBridgeTaskConstMeta(
+        debugName: "session_keep_awake",
+        argNames: ["sessionId"],
       );
 
   Future<void> sessionTakeScreenshot(

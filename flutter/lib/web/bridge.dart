@@ -181,6 +181,11 @@ class AnuvadiniImpl {
     return Future(() => js.context.callMethod('setByName', ['refresh']));
   }
 
+  Future<void> sessionKeepAwake(
+      {required UuidValue sessionId, dynamic hint}) {
+    return Future(() => js.context.callMethod('setByName', ['session_keep_awake']));
+  }
+
   Future<void> sessionRecordScreen(
       {required UuidValue sessionId, required bool start, dynamic hint}) {
     throw UnimplementedError("sessionRecordScreen");

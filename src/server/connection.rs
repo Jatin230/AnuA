@@ -340,6 +340,7 @@ impl Subscriber for ConnInner {
 
 const TEST_DELAY_TIMEOUT: Duration = Duration::from_secs(1);
 const SEC30: Duration = Duration::from_secs(30);
+const KEEP_AWAKE_INTERVAL: Duration = Duration::from_secs(14);
 const H1: Duration = Duration::from_secs(3600);
 const MILLI1: Duration = Duration::from_millis(1);
 const SEND_TIMEOUT_VIDEO: u64 = 12_000;
@@ -517,6 +518,7 @@ impl Connection {
         let mut test_delay_timer =
             crate::anuvadini_interval(time::interval_at(Instant::now(), TEST_DELAY_TIMEOUT));
         let mut last_recv_time = Instant::now();
+        let mut last_keep_awake_send = Instant::now();
 
         conn.stream.set_send_timeout(
             if conn.file_transfer.is_some() || conn.port_forward_socket.is_some() || conn.terminal {
@@ -940,6 +942,20 @@ impl Connection {
                     if conn.is_authed_remote_conn() || conn.view_camera {
                         if let Some(last_test_delay) = conn.last_test_delay {
                             video_service::VIDEO_QOS.lock().unwrap().user_delay_response_elapsed(id, last_test_delay.elapsed().as_millis());
+                        }
+                        // Keep-awake: send a lightweight ping every 14 s of inactivity
+                        // to prevent the remote device from going to sleep.
+                        if last_recv_time.elapsed() >= KEEP_AWAKE_INTERVAL
+                            && last_keep_awake_send.elapsed() >= KEEP_AWAKE_INTERVAL
+                        {
+                            last_keep_awake_send = Instant::now();
+                            let mut msg_out = Message::new();
+                            msg_out.set_test_delay(TestDelay{
+                                last_delay: conn.network_delay,
+                                target_bitrate: video_service::VIDEO_QOS.lock().unwrap().bitrate(),
+                                ..Default::default()
+                            });
+                            conn.send(msg_out.into()).await;
                         }
                     }
                 }

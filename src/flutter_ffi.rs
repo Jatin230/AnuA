@@ -240,14 +240,14 @@ pub fn start_nostr_webrtc_host() {
                 hbb_common::nostr_signaling::ensure_started();
 
                 let result = hbb_common::tokio::time::timeout(
-                    std::time::Duration::from_secs(20),
+                    std::time::Duration::from_secs(30),
                     hbb_common::nostr_signaling::generate_host_nostr_webrtc_uri(),
                 )
                 .await;
                 let initial_uri = match result {
                     Ok(r) => r,
                     Err(_) => Err(hbb_common::anyhow::anyhow!(
-                        "Timed out generating Nostr WebRTC offer (>20 s). \
+                        "Timed out generating Nostr WebRTC offer (>30 s). \
                          Check STUN server connectivity."
                     )),
                 };
@@ -327,7 +327,10 @@ pub fn publish_nostr_registration(laptop_device_id: String, phone_offer_uri: Str
             hbb_common::nostr_signaling::ensure_started();
             let phone_name = crate::common::DEVICE_NAME.lock().unwrap().clone();
             let phone_device_id = config::Config::get_id().replace(' ', "");
-            let temp_password = config::Config::get_permanent_password();
+            let mut temp_password = config::Config::get_permanent_password();
+            if temp_password.is_empty() {
+                temp_password = crate::ui_interface::temporary_password();
+            }
 
             let registration_msg = format!(
                 "ANUVADINI_HELLO:{}:{}:{}:{}",
@@ -554,6 +557,12 @@ pub fn session_refresh(session_id: SessionID, display: usize) {
 pub fn session_take_screenshot(session_id: SessionID, display: usize) {
     if let Some(s) = sessions::get_session_by_session_id(&session_id) {
         s.take_screenshot(display as _, session_id.to_string());
+    }
+}
+
+pub fn session_keep_awake(session_id: SessionID) {
+    if let Some(s) = sessions::get_session_by_session_id(&session_id) {
+        s.keep_awake();
     }
 }
 

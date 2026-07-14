@@ -271,7 +271,7 @@ impl WsFramedStream {
             let msg = match msg {
                 Ok(msg) => msg,
                 Err(e) => {
-                    log::error!("{}", e);
+                    log::error!("[WS-ERROR] WebSocket {} protocol error: {}", self.addr, e);
                     return Some(Err(Error::new(
                         ErrorKind::Other,
                         format!("WebSocket protocol error: {}", e),
@@ -293,7 +293,8 @@ impl WsFramedStream {
                     let bytes = BytesMut::from(text.as_bytes());
                     return Some(Ok(bytes));
                 }
-                WsMessage::Close(_) => {
+                WsMessage::Close(frame) => {
+                    log::info!("[WS-CLOSE] WebSocket {} received close frame: {:?}", self.addr, frame);
                     return None;
                 }
                 _ => {
@@ -302,6 +303,7 @@ impl WsFramedStream {
             }
         }
 
+        log::info!("[WS-CLOSE] WebSocket {} stream exhausted (no more messages)", self.addr);
         None
     }
 
