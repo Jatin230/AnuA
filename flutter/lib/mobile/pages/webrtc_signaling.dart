@@ -182,7 +182,7 @@ Future<NostrOfferLookup?> _fetchOfferFromRelay({
               nostrDiagnostics[relay] = 'Offer found!';
               finish(NostrOfferLookup(
                 deviceId: deviceId,
-                pubkey: pubkey,
+                pubkey: pubkey.isEmpty ? eventPubkey : pubkey,
                 offer: content,
                 relay: relay,
               ));
@@ -242,6 +242,71 @@ Future<NostrOfferLookup?> _fetchOfferFromRelay({
     finish(null);
     return null;
   });
+}
+
+/// Result of a Nostr device lookup.
+class DeviceLookupResult {
+  final String deviceId;
+  final String pubkey;
+  final String offer;
+  final String relay;
+
+  DeviceLookupResult({
+    required this.deviceId,
+    required this.pubkey,
+    required this.offer,
+    required this.relay,
+  });
+}
+
+/// Look up a device by its ID on Nostr relays and return its WebRTC offer
+/// and Nostr pubkey. Unlike [fetchHostOffer], this does not require a known
+/// pubkey — it extracts it from the relay event.
+///
+/// Returns null if no offer is found within [timeout].
+Future<DeviceLookupResult?> lookupDeviceById(
+  String deviceId, {
+  Duration timeout = const Duration(seconds: 30),
+}) async {
+  final normalizedId = _normalizeDeviceId(deviceId);
+  final deadline = DateTime.now().add(timeout);
+  var delay = const Duration(seconds: 2);
+
+  while (DateTime.now().isBefore(deadline)) {
+    final results = await Future.wait(
+      _defaultNostrRelays.map((relay) async {
+        try {
+          final lookup = await _fetchOfferFromRelay(
+            relay: relay,
+            deviceId: normalizedId,
+            pubkey: '', // no pubkey filter — accept any
+            timeout: Duration(seconds: 15),
+          );
+          if (lookup != null && lookup.pubkey.isNotEmpty) {
+            return DeviceLookupResult(
+              deviceId: normalizedId,
+              pubkey: lookup.pubkey,
+              offer: lookup.offer,
+              relay: lookup.relay,
+            );
+          }
+          return null;
+        } catch (_) {
+          return null;
+        }
+      }),
+    );
+    for (final r in results) {
+      if (r != null) return r;
+    }
+    final remaining = deadline.difference(DateTime.now());
+    if (remaining <= Duration.zero) break;
+    await Future.delayed(delay);
+    if (delay < const Duration(seconds: 5)) {
+      delay += const Duration(seconds: 1);
+    }
+  }
+  return null;
 }
 
 bool _matchesDeviceId(dynamic tags, String deviceId) {

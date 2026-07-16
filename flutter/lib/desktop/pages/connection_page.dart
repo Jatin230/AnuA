@@ -10,9 +10,9 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/widgets/popup_menu.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:get/get.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../common.dart';
 import '../../common/formatter/id_formatter.dart';
@@ -20,6 +20,8 @@ import '../../common/widgets/peer_tab_page.dart';
 import '../../common/widgets/autocomplete.dart';
 import '../../models/platform_model.dart';
 import '../../desktop/widgets/material_mod_popup_menu.dart' as mod_menu;
+import '../../mobile/pages/webrtc_signaling.dart' show lookupDeviceById;
+import '../../utils/multi_window_manager.dart' show anuvadiniWinManager;
 
 class OnlineStatusWidget extends StatefulWidget {
   const OnlineStatusWidget({Key? key, this.onSvcStatusChanged})
@@ -215,6 +217,8 @@ class _ConnectionPageState extends State<ConnectionPage>
   Iterable<Peer> _autocompleteOpts = [];
 
   final _menuOpen = false.obs;
+  final _nostrWebrtcMode = false.obs;
+  bool _nostrConnecting = false;
 
   @override
   void initState() {
@@ -336,6 +340,94 @@ class _ConnectionPageState extends State<ConnectionPage>
         isFileTransfer: isFileTransfer,
         isViewCamera: isViewCamera,
         isTerminal: isTerminal);
+  }
+
+  /// Connect to a remote device via Nostr WebRTC using its Device ID.
+  /// Looks up the device's WebRTC offer + pubkey from Nostr relays,
+  /// prompts for password, then initiates a WebRTC connection.
+  Future<void> _onNostrConnect() async {
+    if (_nostrConnecting) return;
+    final deviceId = _idController.id.replaceAll(' ', '');
+    if (deviceId.isEmpty) {
+      showToast('Enter a Device ID');
+      return;
+    }
+
+    setState(() => _nostrConnecting = true);
+    try {
+      showToast('Looking up device $deviceId on Nostr...');
+      final result = await lookupDeviceById(deviceId);
+      if (result == null) {
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Device Not Found'),
+              content: Text(
+                'Device "$deviceId" was not found on Nostr relays.\n\n'
+                'Make sure the target device has the Nostr tab open '
+                '(start_nostr_webrtc_host running).',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+
+      // Prompt for password
+      final pwdController = TextEditingController();
+      final password = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Enter Password'),
+          content: TextField(
+            controller: pwdController,
+            obscureText: true,
+            decoration: const InputDecoration(
+              hintText: 'Remote device password',
+            ),
+            onSubmitted: (v) => Navigator.pop(ctx, v),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, pwdController.text),
+              child: const Text('Connect'),
+            ),
+          ],
+        ),
+      );
+      pwdController.dispose();
+
+      if (password == null || !mounted) return;
+
+      // Build nostr-webrtc:// URI
+      final encodedOffer = base64Encode(utf8.encode(result.offer));
+      final uri = 'nostr-webrtc://${result.deviceId}?offer=$encodedOffer#${result.pubkey}';
+
+      showToast('Connecting via Nostr WebRTC...');
+      await anuvadiniWinManager.newRemoteDesktop(
+        uri,
+        password: password.isNotEmpty ? password : null,
+        nostrMode: 'control',
+      );
+    } catch (e) {
+      if (mounted) {
+        showToast('Nostr connection failed: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _nostrConnecting = false);
+    }
   }
 
   /// UI for the remote ID TextField.
@@ -515,13 +607,62 @@ class _ConnectionPageState extends State<ConnectionPage>
             Padding(
               padding: const EdgeInsets.only(top: 13.0),
               child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                Obx(() => GestureDetector(
+                  onTap: () => _nostrWebrtcMode.toggle(),
+                  child: Container(
+                    height: 28.0,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _nostrWebrtcMode.value
+                            ? Colors.green
+                            : Theme.of(context).dividerColor,
+                      ),
+                      color: _nostrWebrtcMode.value
+                          ? Colors.green.withOpacity(0.15)
+                          : Colors.transparent,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _nostrWebrtcMode.value
+                              ? Icons.wifi
+                              : Icons.wifi_off,
+                          size: 14,
+                          color: _nostrWebrtcMode.value
+                              ? Colors.green
+                              : Colors.grey,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Nostr',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _nostrWebrtcMode.value
+                                ? Colors.green
+                                : Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )),
+                const SizedBox(width: 8),
                 SizedBox(
                   height: 28.0,
                   child: ElevatedButton(
                     onPressed: () {
-                      onConnect();
+                      if (_nostrWebrtcMode.value) {
+                        _onNostrConnect();
+                      } else {
+                        onConnect();
+                      }
                     },
-                    child: Text(translate("Connect")),
+                    child: Text(_nostrWebrtcMode.value
+                        ? 'Nostr Connect'
+                        : translate("Connect")),
                   ),
                 ),
                 const SizedBox(width: 8),

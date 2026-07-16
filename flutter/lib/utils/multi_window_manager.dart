@@ -231,6 +231,7 @@ class AnuvadiniMultiWindowManager {
     bool? isSharedPassword,
     String? connToken,
     bool? openInTabsOverride,
+    String? nostrMode,
   }) async {
     var params = {
       "type": type.index,
@@ -249,6 +250,9 @@ class AnuvadiniMultiWindowManager {
     }
     if (connToken != null) {
       params['connToken'] = connToken;
+    }
+    if (nostrMode != null) {
+      params['nostrMode'] = nostrMode;
     }
     final msg = jsonEncode(params);
 
@@ -276,6 +280,7 @@ class AnuvadiniMultiWindowManager {
     String? switchUuid,
     bool? forceRelay,
     bool? openInTabsOverride,
+    String? nostrMode,
   }) async {
     return await newSession(
       WindowType.RemoteDesktop,
@@ -287,6 +292,7 @@ class AnuvadiniMultiWindowManager {
       switchUuid: switchUuid,
       isSharedPassword: isSharedPassword,
       openInTabsOverride: openInTabsOverride,
+      nostrMode: nostrMode,
     );
   }
 
