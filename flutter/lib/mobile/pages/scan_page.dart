@@ -10,10 +10,18 @@ import 'package:zxing2/qrcode.dart';
 
 import '../../common.dart';
 import '../../models/platform_model.dart';
+import '../device_session_manager.dart';
 import '../widgets/dialog.dart';
+import 'multi_session_page.dart';
 import 'webrtc_signaling.dart';
 
 class ScanPage extends StatefulWidget {
+  /// When set, "Control Laptop" returns the URI via callback instead of
+  /// navigating to RemotePage directly. Used by multi-device session mode.
+  final void Function(String uri, String? password)? onNostrControlLaptop;
+
+  const ScanPage({super.key, this.onNostrControlLaptop});
+
   @override
   State<ScanPage> createState() => _ScanPageState();
 }
@@ -238,10 +246,41 @@ class _ScanPageState extends State<ScanPage> {
         return;
       }
 
-      // ── Control Laptop (original flow) ──
+      // ── Control Laptop ──
       final embeddedOffer = _decodeEmbeddedOffer(_parseNostrOfferParam(data));
+
+      // Multi-device mode: delegate to callback and pop
+      if (widget.onNostrControlLaptop != null) {
+        if (embeddedOffer != null) {
+          final uri = _buildNostrWebRtcUri(deviceId, pubkey, embeddedOffer);
+          widget.onNostrControlLaptop!(uri, password);
+          if (mounted) Navigator.of(context).pop();
+          return;
+        }
+        showToast('Fetching host offer from Nostr (may take ~45 s)...');
+        final offer = await fetchHostOffer(
+          deviceId: deviceId,
+          pubkey: pubkey,
+          onStatus: (diag) {
+            showToast('$diag', timeout: const Duration(seconds: 6));
+          },
+        );
+        if (offer != null && offer.startsWith('webrtc://')) {
+          final uri = _buildNostrWebRtcUri(deviceId, pubkey, offer);
+          widget.onNostrControlLaptop!(uri, password);
+          if (mounted) Navigator.of(context).pop();
+          return;
+        }
+        showToast('Failed to fetch host offer');
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
+
+      // ── Control Laptop (multi-device flow) ──
+      // Build URI and navigate to MultiSessionPage
+      String? finalUri;
       if (embeddedOffer != null) {
-        connect(context, _buildNostrWebRtcUri(deviceId, pubkey, embeddedOffer), password: password, nostrMode: 'control');
+        finalUri = _buildNostrWebRtcUri(deviceId, pubkey, embeddedOffer);
       } else {
         showToast('Fetching host offer from Nostr (may take ~45 s)...');
         final offer = await fetchHostOffer(
@@ -253,43 +292,42 @@ class _ScanPageState extends State<ScanPage> {
         );
         if (offer != null && offer.startsWith('webrtc://')) {
           showToast('Establishing WebRTC connection...');
-          // Build a nostr-webrtc:// URI and use the existing connect() flow,
-          // which navigates to RemotePage → gFFI.start() → Client::_start()
-          // → WebRTCStream::new() → normal Anuvadini session over the data channel.
-          final uri = _buildNostrWebRtcUri(deviceId, pubkey, offer);
-          if (mounted) {
-            connect(context, uri, password: password, nostrMode: 'control');
-          } else {
-            // Scanner was popped during the long fetchHostOffer await;
-            // fall back to root navigator context.
-            final rootCtx = globalKey.currentContext;
-            if (rootCtx != null) {
-              connect(rootCtx, uri, password: password, nostrMode: 'control');
-            } else {
-              showToast('Page closed during offer fetch — please scan again');
-            }
-          }
+          finalUri = _buildNostrWebRtcUri(deviceId, pubkey, offer);
+        } else {
+          final diag = getNostrDiagnosticsSummary();
+          if (!mounted) return;
+          await showDialog(
+            context: context,
+            barrierDismissible: true,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Nostr Offer Not Found'),
+              content: SingleChildScrollView(child: Text(diag)),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+          controller?.resumeCamera();
           return;
         }
-        final diag = getNostrDiagnosticsSummary();
-        if (!mounted) return;
-        await showDialog(
-          context: context,
-          barrierDismissible: true,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Nostr Offer Not Found'),
-            content: SingleChildScrollView(
-              child: Text(diag),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
+      }
+
+      if (finalUri != null && mounted) {
+        final label = Uri.tryParse(finalUri)?.host ?? deviceId;
+        DeviceSessionManager.instance.createDevice(
+          id: finalUri,
+          label: label,
+          password: password,
+          nostrMode: 'control',
         );
-        controller?.resumeCamera();
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const MultiSessionPage()),
+          );
+        }
       }
       return;
     }

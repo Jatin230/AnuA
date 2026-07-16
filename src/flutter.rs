@@ -1397,6 +1397,11 @@ pub fn session_start_(
             try_send_close_event(&h.event_stream);
             h.event_stream = Some(event_stream);
             is_found = true;
+            // Invalidate stale rgba frames so the next decoded frame
+            // is sent to the new event stream instead of being dropped.
+            for (_, rgba_data) in s.display_rgbas.write().unwrap().iter_mut() {
+                rgba_data.valid = false;
+            }
             break;
         }
     }

@@ -1544,8 +1544,13 @@ FFI ffi(String? tag) {
 
 /// Global FFI object
 late FFI _globalFFI;
+FFI Function()? _gffiOverride;
 
-FFI get gFFI => _globalFFI;
+FFI get gFFI => _gffiOverride?.call() ?? _globalFFI;
+
+void setGffiOverride(FFI Function()? override) {
+  _gffiOverride = override;
+}
 
 Future<void> initGlobalFFI() async {
   debugPrint("_globalFFI init");

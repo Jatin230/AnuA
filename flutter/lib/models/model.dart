@@ -3673,6 +3673,7 @@ class FFI {
   var version = '';
   var connType = ConnType.defaultConn;
   var closed = false;
+  bool _sessionRegistered = false;
 
   /// dialogManager use late to ensure init after main page binding [globalKey]
   late final dialogManager = OverlayDialogManager();
@@ -3793,22 +3794,28 @@ class FFI {
     // If tabWindowId != null, this session is a "tab -> window" one.
     // Else this session is a new one.
   if (isNewPeer) {
-      // ignore: unused_local_variable
-      final addRes = bind.sessionAddSync(
-        sessionId: sessionId,
-        id: id,
-        isFileTransfer: isFileTransfer,
-        isViewCamera: isViewCamera,
-        isPortForward: isPortForward,
-        isRdp: isRdp,
-        isTerminal: isTerminal,
-        switchUuid: switchUuid ?? '',
-        forceRelay: forceRelay ?? false,
-        password: password ?? '',
-        isSharedPassword: isSharedPassword ?? false,
-        connToken: connToken,
-        nostrMode: nostrMode,
-      );
+      if (!_sessionRegistered) {
+        // ignore: unused_local_variable
+        final addRes = bind.sessionAddSync(
+          sessionId: sessionId,
+          id: id,
+          isFileTransfer: isFileTransfer,
+          isViewCamera: isViewCamera,
+          isPortForward: isPortForward,
+          isRdp: isRdp,
+          isTerminal: isTerminal,
+          switchUuid: switchUuid ?? '',
+          forceRelay: forceRelay ?? false,
+          password: password ?? '',
+          isSharedPassword: isSharedPassword ?? false,
+          connToken: connToken,
+          nostrMode: nostrMode,
+        );
+        if (addRes != '') {
+          debugPrint('sessionAddSync non-fatal (may already exist): $addRes');
+        }
+        _sessionRegistered = true;
+      }
     } else if (display != null) {
       if (displays == null) {
         debugPrint(
