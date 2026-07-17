@@ -1064,7 +1064,12 @@ class FfiModel with ChangeNotifier {
   void reconnect(OverlayDialogManager dialogManager, SessionID sessionId,
       bool forceRelay) {
     // Disable relative mouse mode before reconnecting to ensure cursor is released.
-    parent.target?.inputModel.setRelativeMouseMode(false);
+    final ffi = parent.target;
+    ffi?.inputModel.setRelativeMouseMode(false);
+    if (ffi != null) {
+      ffi.closed = false;
+      ffi.mobileReset();
+    }
     bind.sessionReconnect(sessionId: sessionId, forceRelay: forceRelay);
     clearPermissions();
     dialogManager.dismissAll();

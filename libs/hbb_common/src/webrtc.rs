@@ -291,26 +291,12 @@ impl WebRTCStream {
             }
         };
 
+        // Always create a new WebRTC connection for each session.
+        // Previously we cached connections by SDP fingerprint, but that
+        // caused multi-device sessions to share the same stream — which
+        // breaks independent device control.  Each session gets its own
+        // RTCPeerConnection, its own io_loop, and its own data channel.
         let mut key = Self::get_key_for_sdp_json(&remote_offer)?;
-        if !key.is_empty() {
-            let mut drop_stale = false;
-            {
-                let sessions_lock = SESSIONS.lock().await;
-                if let Some(cached_stream) = sessions_lock.get(&key) {
-                    let state = cached_stream.pc.connection_state();
-                    if state == RTCPeerConnectionState::Connecting || state == RTCPeerConnectionState::Connected {
-                        log::debug!("Start webrtc with cached peer (state={:?})", state);
-                        return Ok(cached_stream.clone());
-                    }
-                    log::warn!("Removing cached WebRTC session with bad state {:?} (key={})", state, key);
-                    drop_stale = true;
-                }
-            }
-            if drop_stale {
-                SESSIONS.lock().await.remove(&key);
-            }
-        }
-
         let start_local_offer = remote_offer.is_empty();
         // Create a SettingEngine and enable Detach
         let mut s = SettingEngine::default();
@@ -417,8 +403,7 @@ impl WebRTCStream {
                     RTCPeerConnectionState::Disconnected
                     | RTCPeerConnectionState::Failed
                     | RTCPeerConnectionState::Closed => {
-                        log::info!("[WS-LIFECYCLE] WebRTC {:?} -> calling shutdown() (cleaning up relay subscriptions)", s);
-                        crate::nostr_signaling::shutdown();
+                        log::info!("[WS-LIFECYCLE] WebRTC {:?} -> NOT calling global shutdown (multi-session safe); cleaning up local session only", s);
                         let _ = on_connection_notify.send(true);
                         log::debug!("WebRTC session closing due to disconnected");
                         let _ = stream_for_close2.lock().await.close().await;
@@ -556,11 +541,11 @@ impl WebRTCStream {
             }
         }
 
+        // Remove any stale session with the same fingerprint.
+        // We never reuse cached streams — each caller session gets its own
+        // independent RTCPeerConnection so multi-device works correctly.
         let mut final_lock = SESSIONS.lock().await;
-        if let Some(session) = final_lock.get(&key) {
-            pc.close().await.ok();
-            return Ok(session.clone());
-        }
+        final_lock.remove(&key);
 
         let webrtc_stream = Self {
             pc,
@@ -570,7 +555,8 @@ impl WebRTCStream {
             detached: Mutex::new(None),
             reassembly_buf: Arc::new(Mutex::new(None)),
         };
-        final_lock.insert(key, webrtc_stream.clone());
+        final_lock.insert(key.clone(), webrtc_stream.clone());
+        log::info!("[L6/WR] WebRTCStream::new returning fresh connection (key={})", key);
         Ok(webrtc_stream)
     }
 
