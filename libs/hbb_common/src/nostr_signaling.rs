@@ -301,26 +301,13 @@ async fn run_host_webrtc_background(device_id: String, initial_session_id: u64) 
     );
     // #endregion
 
-    // Loop so the laptop continuously waits for new connections after each attempt.
-    // This prevents the "no waiting host task found" error that occurred when a
-    // second scan attempt arrived after the first session had already completed.
     let mut my_session_id = initial_session_id;
     loop {
-        // Ensure Nostr relay subscriptions are alive.  The previous session's
-        // peer-connection-disconnect handler calls `shutdown()`, which kills the
-        // relay-loops.  Without this restart the answer from the next offer can
-        // never be received, causing a 120 s timeout death spiral.
         ensure_started();
 
-        // Clear any cached peer connections so we get a fresh DTLS certificate.
-        // Without this the SDP fingerprint is identical every session → same Nostr
-        // event content → relay returns "duplicate: have this event" and the phone
-        // fetches a stale offer that doesn't match the new peer.
+        // Clear any cached peer connections so each session gets a fresh
+        // RTCPeerConnection with newly-gathered ICE candidates.
         crate::webrtc::clear_host_sessions().await;
-
-        // The received-answer cache is session-aware: wait_for_webrtc_answer
-        // checks that the cached session_id matches, so stale answers from
-        // a previous session are automatically ignored.
 
         match crate::webrtc::WebRTCStream::new("", false, 30_000).await {
             Ok(stream) => match stream.get_local_endpoint().await {
@@ -374,7 +361,6 @@ async fn run_host_webrtc_background(device_id: String, initial_session_id: u64) 
                                 log::error!("[HD] Failed to apply client WebRTC answer: {}", err);
                             } else {
                                 log::info!("[HD] WebRTC handshake complete for device {}", device_id);
-                                // Start the Anuvadini server session on the WebRTC stream.
                                 let starter_opt = HOST_SESSION_STARTER.lock().unwrap().clone();
                                 if let Some(starter) = starter_opt {
                                     log::info!("[HD] Starting server session on WebRTC stream (session {})", my_session_id);
@@ -459,17 +445,26 @@ pub async fn wait_for_webrtc_answer(
 
     log::info!("DEBUG: answer waiter registered");
 
-    let answer = tokio::time::timeout(
+    let result = tokio::time::timeout(
         Duration::from_millis(timeout_ms),
         rx,
     )
-    .await
-    .map_err(|_| anyhow!("Timed out waiting for WebRTC answer from Nostr"))?
-    .map_err(|_| anyhow!("WebRTC answer channel was dropped"))?;
+    .await;
 
-    log::info!("DEBUG: wait_for_webrtc_answer returning successfully");
+    // Clear PENDING_ANSWER_TX so no stale sender is left behind.
+    // Without this, a late-arriving answer would see a stale tx,
+    // call tx.send() which silently fails, and the answer is lost
+    // (even with the cache fallback in handle_relay_message).
+    PENDING_ANSWER_TX.lock().unwrap().take();
 
-    Ok(answer)
+    match result {
+        Ok(Ok(answer)) => {
+            log::info!("DEBUG: wait_for_webrtc_answer returning successfully");
+            Ok(answer)
+        }
+        Ok(Err(_)) => Err(anyhow!("WebRTC answer channel was dropped")),
+        Err(_) => Err(anyhow!("Timed out waiting for WebRTC answer from Nostr")),
+    }
 }
 
 /// Called from `relay_background_loop` whenever a TEXT message arrives from a relay.
@@ -517,7 +512,13 @@ fn handle_relay_message(text: &str) {
         let mut guard = PENDING_ANSWER_TX.lock().unwrap();
         if let Some(tx) = guard.take() {
             log::info!("[P9] Delivering answer to waiting host task (preview: {}...)", endpoint_preview);
-            let _ = tx.send(content);
+            if tx.send(content.clone()).is_err() {
+                // Receiver was dropped (wait_for_webrtc_answer timed out).
+                // Cache the answer so the next waiter can pick it up.
+                let session_id = HOST_SESSION_ID.load(Ordering::SeqCst);
+                log::info!("[P9] Answer receiver dropped; caching for session {} (preview: {}...)", session_id, endpoint_preview);
+                *RECEIVED_ANSWER_CACHE.lock().unwrap() = Some((session_id, content));
+            }
         } else {
             let session_id = HOST_SESSION_ID.load(Ordering::SeqCst);
             log::info!("[P9] No waiting host task found, caching answer for session {} in RECEIVED_ANSWER_CACHE (preview: {}...)", session_id, endpoint_preview);

@@ -84,6 +84,43 @@ lazy_static::lazy_static! {
     static ref SESSIONS: Arc::<Mutex<HashMap<String, WebRTCStream>>> = Default::default();
 }
 
+/// Cached DTLS certificate used by ALL host RTCPeerConnections so the
+/// SDP fingerprint stays the same across loop iterations.  Without this,
+/// each new `WebRTCStream` generates a fresh certificate (new fingerprint)
+/// and the phone's answer — which references the offer's fingerprint — is
+/// rejected by `set_remote_description` because the fingerprints don't match.
+///
+/// The certificate is generated once on first use.  The same certificate
+/// is passed into every host-side `RTCPeerConnection` so they all share
+/// the same fingerprint, while ICE candidates are freshly gathered each
+/// loop iteration (avoiding stale NAT bindings).
+lazy_static::lazy_static! {
+    static ref HOST_CERTIFICATES: std::sync::Mutex<Option<Vec<webrtc::peer_connection::certificate::RTCCertificate>>> = std::sync::Mutex::new(None);
+}
+
+#[cfg(feature = "webrtc")]
+fn get_or_init_host_certificates() -> std::sync::MutexGuard<'static, Option<Vec<webrtc::peer_connection::certificate::RTCCertificate>>> {
+    use webrtc::peer_connection::certificate::RTCCertificate;
+    let mut guard = HOST_CERTIFICATES.lock().unwrap();
+    if guard.is_none() {
+        match rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256) {
+            Ok(kp) => match RTCCertificate::from_key_pair(kp) {
+                Ok(cert) => {
+                    log::info!("Generated persistent DTLS certificate for host WebRTC sessions");
+                    *guard = Some(vec![cert]);
+                }
+                Err(e) => {
+                    log::error!("Failed to generate host certificate: {}", e);
+                }
+            },
+            Err(e) => {
+                log::error!("Failed to generate key pair for host certificate: {}", e);
+            }
+        }
+    }
+    guard
+}
+
 /// Clear all cached host WebRTC peer connections.
 ///
 /// Must be called before each new Nostr host session so that `WebRTCStream::new`
@@ -311,6 +348,11 @@ impl WebRTCStream {
         let api = APIBuilder::new().with_setting_engine(s).build();
 
         // Prepare the configuration, get ICE servers from config
+        let certs = if start_local_offer {
+            get_or_init_host_certificates().clone().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let config = RTCConfiguration {
             ice_servers: Self::get_ice_servers(),
             ice_transport_policy: if force_relay {
@@ -318,6 +360,7 @@ impl WebRTCStream {
             } else {
                 RTCIceTransportPolicy::All
             },
+            certificates: certs,
             ..Default::default()
         };
 

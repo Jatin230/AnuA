@@ -4721,6 +4721,7 @@ dependencies = [
  "protobuf",
  "protobuf-codegen",
  "rand 0.8.5",
+ "rcgen",
  "regex",
  "rustls-native-certs",
  "rustls-pki-types",
