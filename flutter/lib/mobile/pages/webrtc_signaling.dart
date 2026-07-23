@@ -23,6 +23,7 @@ class NostrOfferLookup {
 const List<String> _defaultNostrRelays = [
   'wss://relay.damus.io',
   'wss://relay.primal.net',
+  'wss://relay.nostr.band',
 ];
 
 final Map<String, String> nostrDiagnostics = {};
@@ -220,9 +221,11 @@ Future<NostrOfferLookup?> _fetchOfferFromRelay({
     cancelOnError: true,
   );
 
-  // Look back 10 minutes (600 seconds) to be robust against clock drift between
-  // the phone and the host computer.
-  final since = (DateTime.now().millisecondsSinceEpoch ~/ 1000) - 600;
+  // Look back 60 minutes to find offers from hosts that published well
+  // before the client started scanning.  The previous 10-minute window was
+  // too short — host offers are often 10–15+ minutes old by the time the
+  // user shows the QR and the client phone fetches it.
+  final since = (DateTime.now().millisecondsSinceEpoch ~/ 1000) - 3600;
   final filter = <String, dynamic>{
     'kinds': [10005],
     '#t': [deviceId],

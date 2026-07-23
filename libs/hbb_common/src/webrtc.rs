@@ -491,9 +491,9 @@ impl WebRTCStream {
             let sdp = pc.create_offer(None).await?;
             let mut gather_complete = pc.gathering_complete_promise().await;
             pc.set_local_description(sdp.clone()).await?;
-            // Wait up to 8 s for ICE candidates; proceed with whatever was gathered.
+            // Wait up to 15 s for ICE candidates; proceed with whatever was gathered.
             // Per WebRTC spec, the SDP is still valid after a partial gather.
-            let _ = timeout(Duration::from_secs(8), gather_complete.recv()).await;
+            let _ = timeout(Duration::from_secs(15), gather_complete.recv()).await;
 
             log::debug!("local offer:\n{}", sdp.sdp);
             // get local sdp key
@@ -552,8 +552,8 @@ impl WebRTCStream {
                 log::error!("WebRTCStream::new: set_local_description failed: {}", e);
                 return Err(e.into());
             }
-            log::info!("WebRTCStream::new: gathering ICE candidates (max 8s)...");
-            let _ = timeout(Duration::from_secs(8), gather_complete.recv()).await;
+            log::info!("WebRTCStream::new: gathering ICE candidates (max 15s)...");
+            let _ = timeout(Duration::from_secs(15), gather_complete.recv()).await;
             log::info!("WebRTCStream::new: ICE gathering complete (or timeout)");
 
             log::debug!("remote offer:\n{}", sdp.sdp);

@@ -2693,7 +2693,7 @@ impl Connection {
                     }
                 }
                 Some(message::Union::FileAction(fa)) => {
-                    let mut handle_fa = self.file_transfer.is_some();
+                    let mut handle_fa = self.file_transfer.is_some() || self.file;
                     if !handle_fa {
                         if let Some(file_action::Union::Send(s)) = fa.union.as_ref() {
                             if JobType::from_proto(s.file_type) == JobType::Printer {

@@ -64,6 +64,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Timer? _timer;
   bool _showBar = !isWebDesktop;
   bool _showGestureHelp = false;
+  bool get _isPhoneControl => widget.nostrMode == 'phone_control';
   String _value = '';
   Orientation? _currentOrientation;
   final _uniqueKey = UniqueKey();
@@ -93,6 +94,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    if (_isPhoneControl) {
+      _showBar = false;
+    }
     _ffi = gFFI;
     _ffi.ffiModel.updateEventListener(sessionId, widget.id);
     debugPrint('RemotePage.initState: about to call _ffi.start with id=${widget.id.length} chars');
@@ -345,7 +349,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     });
   }
 
-  Widget _bottomWidget() => _showGestureHelp
+  Widget _bottomWidget() => _showGestureHelp && !_isPhoneControl
       ? getGestureHelp()
       : (_showBar && _ffi.ffiModel.pi.displays.isNotEmpty
           ? getBottomAppBar()
@@ -551,7 +555,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                   ] +
                   (isWebDesktop || ffiModel.viewOnly || !ffiModel.keyboard
                       ? []
-                      : _ffi.ffiModel.isPeerAndroid
+                      : _ffi.ffiModel.isPeerAndroid || _isPhoneControl
                           ? [
                               _toolbarActionButton(
                                   icon:

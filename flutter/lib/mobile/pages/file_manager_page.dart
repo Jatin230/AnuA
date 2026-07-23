@@ -15,12 +15,14 @@ class FileManagerPage extends StatefulWidget {
       required this.id,
       this.password,
       this.isSharedPassword,
-      this.forceRelay})
+      this.forceRelay,
+      this.reuseSession = false})
       : super(key: key);
   final String id;
   final String? password;
   final bool? isSharedPassword;
   final bool? forceRelay;
+  final bool reuseSession;
 
   @override
   State<StatefulWidget> createState() => _FileManagerPageState();
@@ -76,23 +78,33 @@ class _FileManagerPageState extends State<FileManagerPage> {
   @override
   void initState() {
     super.initState();
-    gFFI.start(widget.id,
-        isFileTransfer: true,
-        password: widget.password,
-        isSharedPassword: widget.isSharedPassword,
-        forceRelay: widget.forceRelay);
+    if (widget.reuseSession) {
+      model.onReady();
+    } else {
+      gFFI.start(widget.id,
+          isFileTransfer: true,
+          password: widget.password,
+          isSharedPassword: widget.isSharedPassword,
+          forceRelay: widget.forceRelay);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      gFFI.dialogManager
-          .showLoading(translate('Connecting...'), onCancel: closeConnection);
+      if (!widget.reuseSession) {
+        gFFI.dialogManager
+            .showLoading(translate('Connecting...'), onCancel: closeConnection);
+      }
     });
-    gFFI.ffiModel.updateEventListener(gFFI.sessionId, widget.id);
+    if (widget.reuseSession) {
+      gFFI.ffiModel.updateEventListener(gFFI.sessionId, widget.id);
+    }
     WakelockManager.enable(_uniqueKey);
   }
 
   @override
   void dispose() {
     model.close().whenComplete(() {
-      gFFI.close();
+      if (!widget.reuseSession) {
+        gFFI.close();
+      }
       gFFI.dialogManager.dismissAll();
       WakelockManager.disable(_uniqueKey);
     });
@@ -117,7 +129,9 @@ class _FileManagerPageState extends State<FileManagerPage> {
           leading: Row(children: [
             IconButton(
                 icon: Icon(Icons.close),
-                onPressed: () => clientClose(gFFI.sessionId, gFFI)),
+                onPressed: () => widget.reuseSession
+                    ? Navigator.of(context).pop()
+                    : clientClose(gFFI.sessionId, gFFI)),
           ]),
           centerTitle: true,
           title: ToggleSwitch(

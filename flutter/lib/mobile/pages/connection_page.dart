@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
 
+import 'package:qr_flutter/qr_flutter.dart';
 import '../../common.dart';
 import '../../common/widgets/peer_tab_page.dart';
 import '../../common/widgets/autocomplete.dart';
@@ -401,6 +402,11 @@ class _ConnectionPageState extends State<ConnectionPage> {
                             icon: Icon(Icons.clear, color: MyTheme.darkGray)),
                       )),
                   IconButton(
+                    onPressed: _showMyQrCode,
+                    icon: Icon(Icons.qr_code, color: MyTheme.darkGray),
+                    tooltip: 'Show My QR',
+                  ),
+                  IconButton(
                     onPressed: () {
                       Navigator.push(
                           context,
@@ -408,6 +414,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
                               builder: (context) => ScanPage()));
                     },
                     icon: Icon(Icons.qr_code_scanner, color: MyTheme.darkGray),
+                    tooltip: 'Scan QR',
                   ),
               SizedBox(
                 width: 60,
@@ -434,6 +441,14 @@ class _ConnectionPageState extends State<ConnectionPage> {
         child: Container(constraints: kMobilePageConstraints, child: child));
   }
 
+  void _showMyQrCode() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _NostrQrDialog(),
+    );
+  }
+
   @override
   void dispose() {
     _uniLinksSubscription?.cancel();
@@ -449,5 +464,153 @@ class _ConnectionPageState extends State<ConnectionPage> {
       Get.delete<TextEditingController>();
     }
     super.dispose();
+  }
+}
+
+class _NostrQrDialog extends StatefulWidget {
+  @override
+  State<_NostrQrDialog> createState() => _NostrQrDialogState();
+}
+
+class _NostrQrDialogState extends State<_NostrQrDialog> {
+  String? _nostrUri;
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _startHost();
+  }
+
+  Future<void> _startHost() async {
+    final completer = Completer<String?>();
+
+    platformFFI.registerEventHandler(
+        'on_nostr_webrtc_ready', '_qr_dialog_ready', (evt) async {
+      if (!completer.isCompleted) completer.complete(evt['uri']);
+    });
+    platformFFI.registerEventHandler(
+        'on_nostr_webrtc_error', '_qr_dialog_err', (evt) async {
+      if (!completer.isCompleted) completer.complete(null);
+    });
+
+    try {
+      await bind.startNostrWebrtcHost();
+    } catch (e) {
+      platformFFI.unregisterEventHandler('on_nostr_webrtc_ready', '_qr_dialog_ready');
+      platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_qr_dialog_err');
+      if (mounted) setState(() { _error = 'Failed to start: $e'; _loading = false; });
+      return;
+    }
+
+    final uri = await completer.future.timeout(
+      const Duration(seconds: 45),
+      onTimeout: () => null,
+    );
+
+    platformFFI.unregisterEventHandler('on_nostr_webrtc_ready', '_qr_dialog_ready');
+    platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_qr_dialog_err');
+
+    if (mounted) {
+      setState(() {
+        if (uri == null || uri.isEmpty) {
+          _error = 'Timed out generating offer. Try again.';
+        } else {
+          _nostrUri = uri;
+        }
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    platformFFI.unregisterEventHandler('on_nostr_webrtc_ready', '_qr_dialog_ready');
+    platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_qr_dialog_err');
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('My QR Code'),
+      content: SizedBox(
+        width: 260,
+        child: _buildContent(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent() {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 12),
+            Text('Generating Nostr offer...', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+      );
+    }
+
+    if (_error != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, color: Colors.red[400], size: 40),
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12), textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: () {
+                setState(() { _loading = true; _error = null; _nostrUri = null; });
+                _startHost();
+              },
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        QrImageView(
+          data: _nostrUri!,
+          version: QrVersions.auto,
+          size: 180,
+          backgroundColor: Colors.white,
+        ),
+        const SizedBox(height: 8),
+        const Text('Works over 5G / internet', style: TextStyle(fontSize: 10, color: Colors.deepPurple)),
+        const SizedBox(height: 4),
+        const Text(
+          'Other phone scans this QR to connect.',
+          style: TextStyle(fontSize: 10, color: Colors.grey),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 4),
+        ElevatedButton(
+          onPressed: () {
+            setState(() { _loading = true; _error = null; _nostrUri = null; });
+            _startHost();
+          },
+          child: const Text('New QR'),
+        ),
+      ],
+    );
   }
 }

@@ -18,9 +18,10 @@ use crate::{anyhow::anyhow, config::Config, log, ResultType};
 /// Only relays that reliably accept TLS from Windows native-tls.
 /// nos.lol is excluded because its certificate chain is not trusted by the
 /// Windows root CA store (os error -2146762487).
-pub const DEFAULT_NOSTR_RELAYS: [&str; 2] = [
+pub const DEFAULT_NOSTR_RELAYS: [&str; 3] = [
     "wss://relay.damus.io",
     "wss://relay.primal.net",
+    "wss://relay.nostr.band",
 ];
 
 static STARTED: AtomicBool = AtomicBool::new(false);

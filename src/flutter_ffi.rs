@@ -303,7 +303,7 @@ pub fn start_nostr_webrtc_client(device_id: String, offer_endpoint: String) -> S
     };
     SyncReturn(rt.block_on(async move {
         hbb_common::nostr_signaling::ensure_started();
-        match hbb_common::webrtc::WebRTCStream::new(&webrtc_uri, false, 30_000).await {
+        match hbb_common::webrtc::WebRTCStream::new(&webrtc_uri, false, 60_000).await {
             Ok(_) => "ok".to_string(),
             Err(e) => format!("error: {}", e),
         }
@@ -412,14 +412,13 @@ pub fn session_add_sync(
                     log::info!("Nostr-WebRTC: User selected VIEW mode (share phone screen)");
                     (false, true, false, false, false)
                 },
-                Some("control") => {
-                    log::info!("Nostr-WebRTC: User selected CONTROL mode (control laptop from phone)");
+                Some("control") | Some("phone_control") => {
+                    log::info!("Nostr-WebRTC: User selected CONTROL mode (remote control device)");
                     (false, false, false, false, false)  // DEFAULT_CONN mode
                 },
                 _ => {
-                    // Default to view mode if not specified
-                    log::warn!("Nostr-WebRTC: No mode specified, defaulting to VIEW mode");
-                    (false, true, false, false, false)
+                    log::warn!("Nostr-WebRTC: No mode specified, defaulting to CONTROL mode");
+                    (false, false, false, false, false)  // DEFAULT_CONN mode (safe default)
                 }
             }
         } else {

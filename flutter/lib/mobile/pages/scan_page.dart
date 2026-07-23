@@ -216,7 +216,8 @@ class _ScanPageState extends State<ScanPage> {
           content: const Text(
               'What would you like to do?\n\n'
               '• Control Laptop — use this phone to remotely control the laptop.\n\n'
-              '• Control Phone — let the laptop remotely control this phone.'),
+              '• Control Phone — let the laptop remotely control this phone.\n\n'
+              '• Connect to Phone — remotely control another phone running as host.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, 'cancel'),
@@ -225,6 +226,10 @@ class _ScanPageState extends State<ScanPage> {
             ElevatedButton(
               onPressed: () => Navigator.pop(ctx, 'control_laptop'),
               child: const Text('Control Laptop'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, 'connect_phone'),
+              child: const Text('Connect to Phone'),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
@@ -243,6 +248,11 @@ class _ScanPageState extends State<ScanPage> {
 
       if (mode == 'control_phone') {
         await _handleNostrControlPhone(deviceId);
+        return;
+      }
+
+      if (mode == 'connect_phone') {
+        await _handleNostrConnectPhone(deviceId, pubkey, password, data);
         return;
       }
 
@@ -343,6 +353,70 @@ class _ScanPageState extends State<ScanPage> {
     } catch (e) {
       showToast('Invalid QR code');
     }
+  }
+
+  Future<void> _handleNostrConnectPhone(
+      String deviceId, String pubkey, String? password, String rawData) async {
+    final embeddedOffer = _decodeEmbeddedOffer(_parseNostrOfferParam(rawData));
+    if (embeddedOffer != null) {
+      final uri = _buildNostrWebRtcUri(deviceId, pubkey, embeddedOffer);
+      final label = Uri.tryParse(uri)?.host ?? deviceId;
+      DeviceSessionManager.instance.createDevice(
+        id: uri,
+        label: label,
+        password: password,
+        nostrMode: 'control',
+      );
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const MultiSessionPage()),
+        );
+      }
+      return;
+    }
+
+    showToast('Fetching phone offer from Nostr (may take ~45 s)...');
+    final offer = await fetchHostOffer(
+      deviceId: deviceId,
+      pubkey: pubkey,
+      onStatus: (diag) {
+        showToast('$diag', timeout: const Duration(seconds: 6));
+      },
+    );
+    if (offer != null && offer.startsWith('webrtc://')) {
+      showToast('Establishing WebRTC connection...');
+      final uri = _buildNostrWebRtcUri(deviceId, pubkey, offer);
+      final label = Uri.tryParse(uri)?.host ?? deviceId;
+      DeviceSessionManager.instance.createDevice(
+        id: uri,
+        label: label,
+        password: password,
+        nostrMode: 'control',
+      );
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const MultiSessionPage()),
+        );
+      }
+      return;
+    }
+    final diag = getNostrDiagnosticsSummary();
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Phone Offer Not Found'),
+        content: SingleChildScrollView(child: Text(diag)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    controller?.resumeCamera();
   }
 
   /// Starts this phone as a Nostr-WebRTC host so the laptop can control it.
