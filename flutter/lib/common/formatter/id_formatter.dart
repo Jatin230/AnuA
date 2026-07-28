@@ -58,3 +58,13 @@ String formatID(String id) {
 String trimID(String id) {
   return id.replaceAll(' ', '');
 }
+
+/// Extracts just the device ID (host) from a nostr-webrtc:// URI.
+/// If the string is not a nostr URI, returns it unchanged.
+String stripNostrUri(String raw) {
+  if (raw.startsWith('nostr-webrtc://')) {
+    final uri = Uri.tryParse(raw);
+    if (uri != null && uri.host.isNotEmpty) return uri.host;
+  }
+  return raw;
+}

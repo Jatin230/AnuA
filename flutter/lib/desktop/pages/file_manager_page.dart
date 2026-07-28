@@ -55,11 +55,13 @@ class FileManagerPage extends StatefulWidget {
   FileManagerPage(
       {Key? key,
       required this.id,
-      required this.password,
-      required this.isSharedPassword,
+      this.password,
+      this.isSharedPassword,
       this.tabController,
       this.connToken,
-      this.forceRelay})
+      this.forceRelay,
+      this.reuseSession = false,
+      this.existingFfi})
       : super(key: key);
   final String id;
   final String? password;
@@ -67,6 +69,8 @@ class FileManagerPage extends StatefulWidget {
   final bool? forceRelay;
   final String? connToken;
   final DesktopTabController? tabController;
+  final bool reuseSession;
+  final FFI? existingFfi;
   final SimpleWrapper<State<FileManagerPage>?> _lastState = SimpleWrapper(null);
 
   FFI get ffi => (_lastState.value! as _FileManagerPageState)._ffi;
@@ -95,25 +99,30 @@ class _FileManagerPageState extends State<FileManagerPage>
   @override
   void initState() {
     super.initState();
-    _ffi = FFI(null);
-    _ffi.start(widget.id,
-        isFileTransfer: true,
-        password: widget.password,
-        isSharedPassword: widget.isSharedPassword,
-        connToken: widget.connToken,
-        forceRelay: widget.forceRelay);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _ffi.dialogManager
-          .showLoading(translate('Connecting...'), onCancel: closeConnection);
-    });
-    Get.put<FFI>(_ffi, tag: 'ft_${widget.id}');
+    if (widget.reuseSession) {
+      _ffi = widget.existingFfi!;
+      _ffi.fileModel.onReady();
+      _ffi.ffiModel.updateEventListener(_ffi.sessionId, widget.id);
+    } else {
+      _ffi = FFI(null);
+      _ffi.start(widget.id,
+          isFileTransfer: true,
+          password: widget.password,
+          isSharedPassword: widget.isSharedPassword,
+          connToken: widget.connToken,
+          forceRelay: widget.forceRelay);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _ffi.dialogManager
+            .showLoading(translate('Connecting...'), onCancel: closeConnection);
+      });
+      Get.put<FFI>(_ffi, tag: 'ft_${widget.id}');
+    }
     WakelockManager.enable(_uniqueKey);
-    if (isWeb) {
+    if (isWeb && !widget.reuseSession) {
       _ffi.ffiModel.updateEventListener(_ffi.sessionId, widget.id);
     }
     debugPrint("File manager page init success with id ${widget.id}");
     _ffi.dialogManager.setOverlayState(_overlayKeyState);
-    // Call onSelected in post frame callback, since we cannot guarantee that the callback will not call setState.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.tabController?.onSelected?.call(widget.id);
     });
@@ -122,12 +131,16 @@ class _FileManagerPageState extends State<FileManagerPage>
 
   @override
   void dispose() {
-    model.close().whenComplete(() {
-      _ffi.close();
-      _ffi.dialogManager.dismissAll();
-      WakelockManager.disable(_uniqueKey);
-      Get.delete<FFI>(tag: 'ft_${widget.id}');
-    });
+    if (widget.reuseSession) {
+      model.close();
+    } else {
+      model.close().whenComplete(() {
+        _ffi.close();
+        _ffi.dialogManager.dismissAll();
+        Get.delete<FFI>(tag: 'ft_${widget.id}');
+      });
+    }
+    WakelockManager.disable(_uniqueKey);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -144,6 +157,12 @@ class _FileManagerPageState extends State<FileManagerPage>
   }
 
   Widget willPopScope(Widget child) {
+    if (widget.reuseSession) {
+      return WillPopScope(
+        onWillPop: () async => true,
+        child: child,
+      );
+    }
     if (isWeb) {
       return WillPopScope(
         onWillPop: () async {
@@ -157,6 +176,18 @@ class _FileManagerPageState extends State<FileManagerPage>
     }
   }
 
+  List<Widget> _buildTitleActions() {
+    if (widget.reuseSession) {
+      return [
+        IconButton(
+          icon: Icon(Icons.close),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ];
+    }
+    return [];
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -164,6 +195,15 @@ class _FileManagerPageState extends State<FileManagerPage>
       OverlayEntry(builder: (_) {
         return willPopScope(Scaffold(
           backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+          appBar: widget.reuseSession
+              ? AppBar(
+                  title: Text('File Transfer'),
+                  leading: IconButton(
+                    icon: Icon(Icons.arrow_back),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                )
+              : null,
           body: Row(
             children: [
               if (!isWeb)

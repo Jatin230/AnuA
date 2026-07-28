@@ -47,12 +47,15 @@ class _ScanPageState extends State<ScanPage> {
       appBar: AppBar(
         title: const Text('Scan QR'),
         actions: [
-          _buildImagePickerButton(),
-          _buildFlashToggleButton(),
           _buildCameraSwitchButton(),
         ],
       ),
-      body: _buildQrView(context),
+      body: Column(
+        children: [
+          Expanded(child: _buildQrView(context)),
+          _buildBottomActions(),
+        ],
+      ),
     );
   }
 
@@ -65,13 +68,27 @@ class _ScanPageState extends State<ScanPage> {
       key: qrKey,
       onQRViewCreated: _onQRViewCreated,
       overlay: QrScannerOverlayShape(
-        borderColor: Colors.red,
+        borderColor: Colors.deepPurple,
         borderRadius: 10,
         borderLength: 30,
         borderWidth: 10,
         cutOutSize: scanArea,
       ),
       onPermissionSet: (ctrl, p) => _onPermissionSet(context, ctrl, p),
+    );
+  }
+
+  Widget _buildBottomActions() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _buildImagePickerButton(),
+          const SizedBox(width: 48),
+          _buildFlashToggleButton(),
+        ],
+      ),
     );
   }
 
@@ -123,33 +140,51 @@ class _ScanPageState extends State<ScanPage> {
   }
 
   Widget _buildImagePickerButton() {
-    return IconButton(
-      color: Colors.white,
-      icon: Icon(Icons.image_search),
-      iconSize: 32.0,
-      onPressed: _pickImage,
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        color: Colors.white,
+        icon: const Icon(Icons.image_search),
+        iconSize: 28.0,
+        onPressed: _pickImage,
+      ),
     );
   }
 
   Widget _buildFlashToggleButton() {
-    return IconButton(
-      color: Colors.yellow,
-      icon: Icon(Icons.flash_on),
-      iconSize: 32.0,
-      onPressed: () async {
-        await controller?.toggleFlash();
-      },
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        color: Colors.yellow,
+        icon: const Icon(Icons.flash_on),
+        iconSize: 28.0,
+        onPressed: () async {
+          await controller?.toggleFlash();
+        },
+      ),
     );
   }
 
   Widget _buildCameraSwitchButton() {
-    return IconButton(
-      color: Colors.white,
-      icon: Icon(Icons.switch_camera),
-      iconSize: 32.0,
-      onPressed: () async {
-        await controller?.flipCamera();
-      },
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        color: Colors.white70,
+        icon: const Icon(Icons.switch_camera),
+        iconSize: 28.0,
+        onPressed: () async {
+          await controller?.flipCamera();
+        },
+      ),
     );
   }
 
@@ -365,7 +400,7 @@ class _ScanPageState extends State<ScanPage> {
         id: uri,
         label: label,
         password: password,
-        nostrMode: 'control',
+        nostrMode: 'phone_control',
       );
       if (mounted) {
         Navigator.of(context).pushReplacement(
@@ -391,7 +426,7 @@ class _ScanPageState extends State<ScanPage> {
         id: uri,
         label: label,
         password: password,
-        nostrMode: 'control',
+        nostrMode: 'phone_control',
       );
       if (mounted) {
         Navigator.of(context).pushReplacement(

@@ -146,4 +146,38 @@ impl Stream {
             _ => None,
         }
     }
+
+    /// Returns true if the WebRTC stream has entered Failed state.
+    #[cfg(feature = "webrtc")]
+    pub fn is_webrtc_failed(&self) -> bool {
+        match self {
+            Self::WebRTC(s) => s.is_failed(),
+            _ => false,
+        }
+    }
+
+    /// Trigger ICE restart on the WebRTC stream (full cycle with re-signaling).
+    /// Returns true if restart was performed, false if already in progress or not WebRTC.
+    #[cfg(feature = "webrtc")]
+    pub async fn restart_webrtc_ice(
+        &mut self,
+        remote_endpoint: &str,
+        force_relay: bool,
+        ms_timeout: u64,
+        signal_device_id: Option<&str>,
+    ) -> bool {
+        match self {
+            Self::WebRTC(s) => s.restart_ice(remote_endpoint, force_relay, ms_timeout, signal_device_id).await,
+            _ => false,
+        }
+    }
+
+    /// Returns a receiver for WebRTC failure notifications (only for WebRTC streams).
+    #[cfg(feature = "webrtc")]
+    pub fn webrtc_failed_receiver(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        match self {
+            Self::WebRTC(s) => Some(s.failed_receiver()),
+            _ => None,
+        }
+    }
 }

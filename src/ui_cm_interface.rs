@@ -1693,7 +1693,9 @@ pub fn handle_incoming_voice_call(id: i32, accept: bool) {
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 #[inline]
 pub fn close_voice_call(id: i32) {
-    if let Some(client) = CLIENTS.read().unwrap().get(&id) {
+    if let Some(client) = CLIENTS.write().unwrap().get_mut(&id) {
+        client.in_voice_call = false;
+        client.incoming_voice_call = false;
         // Not handled in iOS yet.
         #[cfg(not(any(target_os = "ios")))]
         allow_err!(client.tx.send(Data::CloseVoiceCall("".to_owned())));

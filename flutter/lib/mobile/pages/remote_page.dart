@@ -433,7 +433,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                               }
                               return Container(
                                 color: MyTheme.canvasColor,
-                                child: _ffi.inputModel.isPhysicalMouse.value
+                                child: _ffi.inputModel.isPhysicalMouse.value && !_isPhoneControl
                                     ? getBodyForMobile()
                                     : RawTouchGestureDetectorRegion(
                                         child: getBodyForMobile(),
@@ -633,7 +633,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   bool get showCursorPaint =>
       !_ffi.ffiModel.isPeerAndroid &&
       !_ffi.canvasModel.cursorEmbedded &&
-      !_ffi.inputModel.relativeMouseMode.value;
+      !_ffi.inputModel.relativeMouseMode.value &&
+      !_isPhoneControl;
 
   Widget getBodyForMobile() {
     final keyboardIsVisible = keyboardVisibilityController.isVisible;
@@ -684,14 +685,16 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           if (showCursorPaint) {
             paints.add(CursorPaint(widget.id));
           }
-          if (_ffi.ffiModel.touchMode) {
-            paints.add(FloatingMouse(
-              ffi: _ffi,
-            ));
-          } else {
-            paints.add(FloatingMouseWidgets(
-              ffi: _ffi,
-            ));
+          if (!_isPhoneControl) {
+            if (_ffi.ffiModel.touchMode) {
+              paints.add(FloatingMouse(
+                ffi: _ffi,
+              ));
+            } else {
+              paints.add(FloatingMouseWidgets(
+                ffi: _ffi,
+              ));
+            }
           }
           return paints;
         }()));

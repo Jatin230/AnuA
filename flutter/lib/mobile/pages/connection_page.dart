@@ -72,7 +72,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
     _idFocusNode.addListener(onFocusChanged);
     if (_idController.text.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
-        final lastRemoteId = await bind.mainGetLastRemoteId();
+        final lastRemoteId = stripNostrUri(await bind.mainGetLastRemoteId());
         if (lastRemoteId != _idController.id) {
           setState(() {
             _idController.id = lastRemoteId;
@@ -593,6 +593,13 @@ class _NostrQrDialogState extends State<_NostrQrDialog> {
           version: QrVersions.auto,
           size: 180,
           backgroundColor: Colors.white,
+          errorCorrectionLevel: QrErrorCorrectLevel.H,
+          eyeStyle: QrEyeStyle(color: Colors.deepPurple[600], eyeShape: QrEyeShape.square),
+          dataModuleStyle: QrDataModuleStyle(color: Colors.deepPurple[400], dataModuleShape: QrDataModuleShape.square),
+          embeddedImage: const AssetImage('assets/logo.png'),
+          embeddedImageStyle: const QrEmbeddedImageStyle(
+            size: Size(40, 40),
+          ),
         ),
         const SizedBox(height: 8),
         const Text('Works over 5G / internet', style: TextStyle(fontSize: 10, color: Colors.deepPurple)),

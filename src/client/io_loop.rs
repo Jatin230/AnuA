@@ -61,6 +61,9 @@ pub struct Remote<T: InvokeUiSession> {
     // Stop sending local audio to remote client.
     stop_voice_call_sender: Option<std::sync::mpsc::Sender<()>>,
     voice_call_request_timestamp: Option<NonZeroI64>,
+    voice_call_request_time: Option<Instant>,
+    webrtc_restart_in_progress: bool,
+    signal_device_id: Option<String>,
     read_jobs: Vec<fs::TransferJob>,
     write_jobs: Vec<fs::TransferJob>,
     remove_jobs: HashMap<i32, RemoveJob>,
@@ -121,6 +124,9 @@ impl<T: InvokeUiSession> Remote<T> {
             video_format: CodecFormat::Unknown,
             stop_voice_call_sender: None,
             voice_call_request_timestamp: None,
+            voice_call_request_time: None,
+            webrtc_restart_in_progress: false,
+            signal_device_id: None,
             elevation_requested: false,
             peer_info: Default::default(),
             video_threads: Default::default(),
@@ -220,6 +226,22 @@ impl<T: InvokeUiSession> Remote<T> {
 
                 let _keep_it = client::hc_connection(feedback, rendezvous_server, token).await;
 
+                // Extract signal device ID from Nostr URI for WebRTC restart
+                {
+                    let peer_id = self.handler.get_id();
+                    if peer_id.starts_with("nostr-webrtc://") {
+                        let host = peer_id.trim_start_matches("nostr-webrtc://")
+                            .split(&['?', '#', '/'][..])
+                            .next()
+                            .unwrap_or("")
+                            .to_owned();
+                        if !host.is_empty() {
+                            self.signal_device_id = Some(host);
+                            log::info!("WebRTC restart: signal_device_id set from peer ID");
+                        }
+                    }
+                }
+
                 loop {
                     tokio::select! {
                         res = peer.next() => {
@@ -308,6 +330,40 @@ impl<T: InvokeUiSession> Remote<T> {
                             } else {
                                 Some(self.video_format.clone())
                             };
+                            // Check voice call timeout (15s without response).
+                            if let Some(req_time) = self.voice_call_request_time {
+                                if req_time.elapsed() > Duration::from_secs(15) {
+                                    self.voice_call_request_timestamp = None;
+                                    self.voice_call_request_time = None;
+                                    self.handler.on_voice_call_closed("Timeout");
+                                }
+                            }
+
+                            // WebRTC ICE restart: if peer connection failed, restart automatically
+                            #[cfg(feature = "webrtc")]
+                            if !self.webrtc_restart_in_progress && peer.is_webrtc_failed() {
+                                self.webrtc_restart_in_progress = true;
+                                log::warn!("WebRTC connection failed — triggering ICE restart");
+                                self.handler.msgbox("info", "Reconnecting", "WebRTC connection lost, reconnecting...", "");
+
+                                let remote = self.handler.get_id().to_owned();
+                                let sig_id = self.signal_device_id.clone();
+                                let ok = peer.restart_webrtc_ice(
+                                    &remote,
+                                    false,
+                                    hbb_common::config::CONNECT_TIMEOUT,
+                                    sig_id.as_deref(),
+                                ).await;
+
+                                if ok {
+                                    log::info!("WebRTC ICE restart succeeded — connection restored");
+                                    self.handler.msgbox("info", "Reconnected", "WebRTC connection restored.", "");
+                                } else {
+                                    log::error!("WebRTC ICE restart failed — will retry on next check");
+                                }
+                                self.webrtc_restart_in_progress = false;
+                            }
+
                             self.handler.update_quality_status(QualityStatus {
                                 speed: Some(speed),
                                 fps,
@@ -970,11 +1026,14 @@ impl<T: InvokeUiSession> Remote<T> {
                     NonZeroI64::new(msg.voice_call_request().req_timestamp)
                         .unwrap_or(NonZeroI64::new(get_time()).unwrap()),
                 );
+                self.voice_call_request_time = Some(Instant::now());
                 allow_err!(peer.send(&msg).await);
                 self.handler.on_voice_call_waiting();
             }
             Data::CloseVoiceCall => {
                 self.stop_voice_call();
+                self.voice_call_request_timestamp = None;
+                self.voice_call_request_time = None;
                 let msg = new_voice_call_request(false);
                 self.handler
                     .on_voice_call_closed("Closed manually by the peer");
@@ -1974,6 +2033,8 @@ impl<T: InvokeUiSession> Remote<T> {
                         // TODO: maybe we will do a voice call from the peer in the future.
                     } else {
                         log::debug!("The remote has requested to close the voice call");
+                        self.voice_call_request_timestamp = None;
+                        self.voice_call_request_time = None;
                         if let Some(sender) = self.stop_voice_call_sender.take() {
                             allow_err!(sender.send(()));
                             self.handler.on_voice_call_closed("");
@@ -1982,18 +2043,27 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
                 Some(message::Union::VoiceCallResponse(response)) => {
                     let ts = std::mem::replace(&mut self.voice_call_request_timestamp, None);
+                    self.voice_call_request_time = None;
                     if let Some(ts) = ts {
                         if response.req_timestamp != ts.get() {
-                            log::debug!("Possible encountering a voice call attack.");
+                            log::debug!("Voice call timestamp mismatch (may be WebRTC reorder), processing anyway.");
+                        }
+                        if response.accepted {
+                            // The peer accepted the voice call.
+                            self.handler.on_voice_call_started();
+                            self.stop_voice_call_sender = self.start_voice_call();
                         } else {
-                            if response.accepted {
-                                // The peer accepted the voice call.
-                                self.handler.on_voice_call_started();
-                                self.stop_voice_call_sender = self.start_voice_call();
-                            } else {
-                                // The peer refused the voice call.
-                                self.handler.on_voice_call_closed("");
-                            }
+                            // The peer refused the voice call.
+                            self.handler.on_voice_call_closed("");
+                        }
+                    } else {
+                        // Timestamp already consumed, but we still process the response
+                        // to avoid getting stuck in waitingForResponse.
+                        if response.accepted {
+                            self.handler.on_voice_call_started();
+                            self.stop_voice_call_sender = self.start_voice_call();
+                        } else {
+                            self.handler.on_voice_call_closed("");
                         }
                     }
                 }

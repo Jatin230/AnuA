@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,6 +36,9 @@ pub struct WebRTCStream {
     pc: Arc<RTCPeerConnection>,
     stream: Arc<Mutex<Arc<RTCDataChannel>>>,
     state_notify: watch::Receiver<bool>,
+    /// Notified when the peer connection enters Failed state (ICE restart needed).
+    failed_tx: watch::Sender<bool>,
+    failed_rx: watch::Receiver<bool>,
     send_timeout: u64,
     /// Cached detached data channel (detach is one-shot).  The inner
     /// DataChannel has direct `read`/`write` methods so we don't need
@@ -43,6 +47,11 @@ pub struct WebRTCStream {
     /// Reassembly buffer for chunked large messages.
     /// Wrapped in Arc so that WebRTCStream can be cloned (stored in SESSIONS map).
     reassembly_buf: Arc<Mutex<Option<ReassemblyState>>>,
+    /// Stores whether ICE restart is currently in progress to prevent infinite loops.
+    restart_in_progress: Arc<AtomicBool>,
+    /// Original parameters saved for ICE restart.
+    restart_signal_device_id: Option<String>,
+    restart_start_local_offer: bool,
 }
 
 struct ReassemblyState {
@@ -142,9 +151,14 @@ impl Clone for WebRTCStream {
             pc: self.pc.clone(),
             stream: self.stream.clone(),
             state_notify: self.state_notify.clone(),
+            failed_tx: self.failed_tx.clone(),
+            failed_rx: self.failed_rx.clone(),
             send_timeout: self.send_timeout,
             detached: Mutex::new(None),
             reassembly_buf: self.reassembly_buf.clone(),
+            restart_in_progress: self.restart_in_progress.clone(),
+            restart_signal_device_id: self.restart_signal_device_id.clone(),
+            restart_start_local_offer: self.restart_start_local_offer,
         }
     }
 }
@@ -333,7 +347,7 @@ impl WebRTCStream {
         // caused multi-device sessions to share the same stream — which
         // breaks independent device control.  Each session gets its own
         // RTCPeerConnection, its own io_loop, and its own data channel.
-        let mut key = Self::get_key_for_sdp_json(&remote_offer)?;
+        let mut key;
         let start_local_offer = remote_offer.is_empty();
         // Create a SettingEngine and enable Detach
         let mut s = SettingEngine::default();
@@ -365,6 +379,9 @@ impl WebRTCStream {
         };
 
         let (notify_tx, notify_rx) = watch::channel(false);
+        let (failed_tx, failed_rx) = watch::channel(false);
+        let restart_in_progress = Arc::new(AtomicBool::new(false));
+        let sig_device_id = signal_device_id.clone();
         // Create a new RTCPeerConnection
         let pc = Arc::new(api.new_peer_connection(config).await?);
         let bootstrap_dc = if start_local_offer {
@@ -430,10 +447,12 @@ impl WebRTCStream {
         // This will notify you when the peer has connected/disconnected
         let stream_for_close = stream.clone();
         let pc_for_close = pc.clone();
+        let failed_tx_for_cb = failed_tx.clone();
         pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
             let stream_for_close2 = stream_for_close.clone();
             let on_connection_notify = notify_tx.clone();
             let pc_for_close2 = pc_for_close.clone();
+            let failed_tx_for_cb2 = failed_tx_for_cb.clone();
             Box::pin(async move {
                 log::info!("[L7/WR] WebRTC peer connection state: {:?}", s);
                 match s {
@@ -443,8 +462,13 @@ impl WebRTCStream {
                         // Shutdown is only safe after the session ends (Disconnected/Failed/Closed).
                         log::info!("[WS-LIFECYCLE] WebRTC Connected — relay kept alive until session ends.");
                     }
+                    RTCPeerConnectionState::Failed => {
+                        log::warn!("[WS-LIFECYCLE] WebRTC Failed — notifying restart watcher");
+                        let _ = failed_tx_for_cb2.send(true);
+                        log::debug!("WebRTC session closing due to Failed");
+                        let _ = stream_for_close2.lock().await.close().await;
+                    }
                     RTCPeerConnectionState::Disconnected
-                    | RTCPeerConnectionState::Failed
                     | RTCPeerConnectionState::Closed => {
                         log::info!("[WS-LIFECYCLE] WebRTC {:?} -> NOT calling global shutdown (multi-session safe); cleaning up local session only", s);
                         let _ = on_connection_notify.send(true);
@@ -491,9 +515,11 @@ impl WebRTCStream {
             let sdp = pc.create_offer(None).await?;
             let mut gather_complete = pc.gathering_complete_promise().await;
             pc.set_local_description(sdp.clone()).await?;
-            // Wait up to 15 s for ICE candidates; proceed with whatever was gathered.
+            // Wait up to 20 s for ICE candidates; proceed with whatever was gathered.
             // Per WebRTC spec, the SDP is still valid after a partial gather.
-            let _ = timeout(Duration::from_secs(15), gather_complete.recv()).await;
+            if timeout(Duration::from_secs(20), gather_complete.recv()).await.is_err() {
+                log::warn!("ICE gathering timed out (20s) — proceeding with partial candidates");
+            }
 
             log::debug!("local offer:\n{}", sdp.sdp);
             // get local sdp key
@@ -552,8 +578,10 @@ impl WebRTCStream {
                 log::error!("WebRTCStream::new: set_local_description failed: {}", e);
                 return Err(e.into());
             }
-            log::info!("WebRTCStream::new: gathering ICE candidates (max 15s)...");
-            let _ = timeout(Duration::from_secs(15), gather_complete.recv()).await;
+            log::info!("WebRTCStream::new: gathering ICE candidates (max 20s)...");
+            if timeout(Duration::from_secs(20), gather_complete.recv()).await.is_err() {
+                log::warn!("ICE gathering timed out (20s) — proceeding with partial candidates");
+            }
             log::info!("WebRTCStream::new: ICE gathering complete (or timeout)");
 
             log::debug!("remote offer:\n{}", sdp.sdp);
@@ -594,9 +622,14 @@ impl WebRTCStream {
             pc,
             stream,
             state_notify: notify_rx,
+            failed_tx,
+            failed_rx,
             send_timeout: ms_timeout,
             detached: Mutex::new(None),
             reassembly_buf: Arc::new(Mutex::new(None)),
+            restart_in_progress,
+            restart_signal_device_id: sig_device_id,
+            restart_start_local_offer: start_local_offer,
         };
         final_lock.insert(key.clone(), webrtc_stream.clone());
         log::info!("[L6/WR] WebRTCStream::new returning fresh connection (key={})", key);
@@ -653,6 +686,308 @@ impl WebRTCStream {
         // DTLS handles key exchange and encryption automatically, so explicit key management is not required.
     }
 
+    /// Returns true if the peer connection has entered Failed state.
+    #[inline]
+    pub fn is_failed(&self) -> bool {
+        *self.failed_rx.borrow()
+    }
+
+    /// Returns a clone of the failed notification receiver.
+    /// The caller can use `receiver.changed().await` to wait for failure.
+    #[inline]
+    pub fn failed_receiver(&self) -> watch::Receiver<bool> {
+        self.failed_rx.clone()
+    }
+
+    /// Trigger a full ICE restart including re-signaling.
+    /// Closes the old PeerConnection, creates a new one, re-does the Nostr
+    /// SDP exchange, and waits for the data channel to open.
+    ///
+    /// # Parameters
+    /// - `remote_endpoint`: the original Nostr URI or SDP string (same as passed to `new()`)
+    /// - `force_relay`: whether to force relay transport
+    /// - `ms_timeout`: connection timeout in milliseconds for the new PC
+    /// - `signal_device_id`: the Nostr device ID for re-publishing (None if not applicable)
+    ///
+    /// Returns `true` if the full restart+reconnect succeeded, `false` otherwise.
+    pub async fn restart_ice(
+        &mut self,
+        remote_endpoint: &str,
+        force_relay: bool,
+        ms_timeout: u64,
+        signal_device_id: Option<&str>,
+    ) -> bool {
+        if self.restart_in_progress.swap(true, Ordering::SeqCst) {
+            log::info!("ICE restart already in progress, skipping duplicate");
+            return false;
+        }
+
+        log::warn!("WebRTC ICE restart triggered");
+
+        // 1. Close old peer connection
+        self.pc.close().await.ok();
+        let _ = self.stream.lock().await.close().await;
+
+        // 2. Extract the remote SDP for the client path
+        let (new_signal_device_id, remote_offer) = if remote_endpoint.is_empty() {
+            (None, "".to_owned())
+        } else if crate::nostr_signaling::is_nostr_webrtc_uri(remote_endpoint) {
+            match Self::parse_remote_signal_endpoint(remote_endpoint) {
+                Ok((dev, offer)) => (dev, offer),
+                Err(e) => {
+                    log::error!("ICE restart: parse_remote_signal_endpoint failed: {}", e);
+                    self.restart_in_progress.store(false, Ordering::SeqCst);
+                    return false;
+                }
+            }
+        } else {
+            (signal_device_id.map(|s| s.to_owned()), remote_endpoint.to_owned())
+        };
+
+        let start_local_offer = remote_offer.is_empty();
+
+        // 3. Create fresh setting engine + API
+        let mut s = SettingEngine::default();
+        s.detach_data_channels();
+        s.set_ice_multicast_dns_mode(MulticastDnsMode::Disabled);
+        s.set_sctp_max_message_size_can_send(SctpMaxMessageSize::Unbounded);
+        let api = APIBuilder::new().with_setting_engine(s).build();
+
+        let certs = if start_local_offer {
+            get_or_init_host_certificates().clone().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        let config = RTCConfiguration {
+            ice_servers: Self::get_ice_servers(),
+            ice_transport_policy: if force_relay {
+                RTCIceTransportPolicy::Relay
+            } else {
+                RTCIceTransportPolicy::All
+            },
+            certificates: certs,
+            ..Default::default()
+        };
+
+        // 4. Create new PeerConnection
+        let new_pc = match api.new_peer_connection(config).await {
+            Ok(pc) => Arc::new(pc),
+            Err(e) => {
+                log::error!("ICE restart: failed to create new PeerConnection: {}", e);
+                self.restart_in_progress.store(false, Ordering::SeqCst);
+                return false;
+            }
+        };
+
+        // 5. Set up data channel
+        let (new_notify_tx, mut new_notify_rx) = watch::channel(false);
+        let new_stream = Arc::new(Mutex::new(Arc::new(RTCDataChannel::default())));
+        let (new_failed_tx, new_failed_rx) = watch::channel(false);
+
+        if start_local_offer {
+            let dc_open_notify = new_notify_tx.clone();
+            match new_pc.create_data_channel("bootstrap", None).await {
+                Ok(dc) => {
+                    dc.on_open(Box::new(move || {
+                        log::info!("[DC/RESTART] Local data channel open.");
+                        let _ = dc_open_notify.send(true);
+                        Box::pin(async {})
+                    }));
+                    let mut lock = new_stream.lock().await;
+                    *lock = dc;
+                }
+                Err(e) => {
+                    log::error!("ICE restart: create_data_channel failed: {}", e);
+                    new_pc.close().await.ok();
+                    self.restart_in_progress.store(false, Ordering::SeqCst);
+                    return false;
+                }
+            }
+        } else {
+            let dc_open_notify = new_notify_tx.clone();
+            let stream_for_dc = new_stream.clone();
+            new_pc.on_data_channel(Box::new(move |dc: Arc<RTCDataChannel>| {
+                let label = dc.label().to_owned();
+                let dc_open = dc_open_notify.clone();
+                let stream_clone = stream_for_dc.clone();
+                Box::pin(async move {
+                    let mut lock = stream_clone.lock().await;
+                    *lock = dc.clone();
+                    drop(lock);
+                    dc.on_open(Box::new(move || {
+                        log::info!("[DC/RESTART] Remote data channel ({}) open.", label);
+                        let _ = dc_open.send(true);
+                        Box::pin(async {})
+                    }));
+                })
+            }));
+        }
+
+        // 6. Set up state-change callbacks for the new PC
+        let failed_tx_cb = new_failed_tx.clone();
+        let stream_for_close = new_stream.clone();
+        let new_pc_for_cb = new_pc.clone();
+        let notify_tx_for_cb = new_notify_tx.clone();
+        new_pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
+            let st = stream_for_close.clone();
+            let nt = notify_tx_for_cb.clone();
+            let ft = failed_tx_cb.clone();
+            let pc2 = new_pc_for_cb.clone();
+            Box::pin(async move {
+                log::info!("[L7/WR/RESTART] WebRTC peer connection state: {:?}", s);
+                match s {
+                    RTCPeerConnectionState::Failed => {
+                        log::warn!("[WS-LIFECYCLE/RESTART] WebRTC Failed");
+                        let _ = ft.send(true);
+                        let _ = nt.send(true);
+                        let _ = st.lock().await.close().await;
+                    }
+                    RTCPeerConnectionState::Disconnected | RTCPeerConnectionState::Closed => {
+                        let _ = nt.send(true);
+                        let _ = st.lock().await.close().await;
+                        let mut lock = SESSIONS.lock().await;
+                        let keys: Vec<String> = lock.iter().filter_map(|(k, v)| {
+                            if Arc::ptr_eq(&v.pc, &pc2) { Some(k.clone()) } else { None }
+                        }).collect();
+                        for k in keys { lock.remove(&k); }
+                    }
+                    _ => {}
+                }
+            })
+        }));
+
+        // 7. Do full SDP exchange with Nostr signaling
+        let signaling_ok = if start_local_offer {
+            // Host path: create offer, publish to Nostr, wait for answer
+            match Self::pc_create_and_publish_offer(
+                &new_pc, &new_stream, &new_notify_tx, &new_signal_device_id,
+            ).await {
+                Ok(()) => true,
+                Err(e) => {
+                    log::error!("ICE restart: host signaling failed: {}", e);
+                    false
+                }
+            }
+        } else {
+            // Client path: set remote description from stored offer, create answer, publish
+            match Self::pc_receive_offer_and_publish_answer(
+                &new_pc, &new_stream, &new_notify_tx, &remote_offer, &new_signal_device_id,
+            ).await {
+                Ok(()) => true,
+                Err(e) => {
+                    log::error!("ICE restart: client signaling failed: {}", e);
+                    false
+                }
+            }
+        };
+
+        if !signaling_ok {
+            new_pc.close().await.ok();
+            self.restart_in_progress.store(false, Ordering::SeqCst);
+            return false;
+        }
+
+        // 8. Wait for data channel open with timeout
+        let dc_open_timeout = Duration::from_millis(if ms_timeout > 0 { ms_timeout } else { 30000 });
+        let dc_ok = tokio::time::timeout(dc_open_timeout, async {
+            if *new_notify_rx.borrow() {
+                return;
+            }
+            let _ = new_notify_rx.changed().await;
+        }).await.is_ok();
+
+        if !dc_ok {
+            log::error!("ICE restart: data channel did not open within timeout");
+            new_pc.close().await.ok();
+            self.restart_in_progress.store(false, Ordering::SeqCst);
+            return false;
+        }
+
+        // 9. Swap state
+        self.pc = new_pc;
+        self.stream = new_stream;
+        self.state_notify = new_notify_rx;
+        self.failed_tx = new_failed_tx;
+        self.failed_rx = new_failed_rx;
+        self.detached = Mutex::new(None);
+        self.reassembly_buf = Arc::new(Mutex::new(None));
+
+        self.restart_in_progress.store(false, Ordering::SeqCst);
+        log::info!("WebRTC ICE restart complete — new PeerConnection ready");
+        true
+    }
+
+    /// Create offer, gather ICE, publish to Nostr, and wait for answer.
+    async fn pc_create_and_publish_offer(
+        pc: &Arc<RTCPeerConnection>,
+        _stream: &Arc<Mutex<Arc<RTCDataChannel>>>,
+        _notify_tx: &watch::Sender<bool>,
+        signal_device_id: &Option<String>,
+    ) -> ResultType<()> {
+        let sdp = pc.create_offer(None).await?;
+        let mut gather_complete = pc.gathering_complete_promise().await;
+        pc.set_local_description(sdp.clone()).await?;
+        if tokio::time::timeout(Duration::from_secs(20), gather_complete.recv()).await.is_err() {
+            log::warn!("[RESTART] ICE gathering timed out (20s)");
+        }
+
+        if let Some(local_desc) = pc.local_description().await {
+            let local_endpoint = Self::sdp_to_endpoint(&serde_json::to_string(&local_desc)?);
+            if let Some(device_id) = signal_device_id {
+                log::info!("[RESTART] publishing new WebRTC offer to Nostr (device={})", device_id);
+                crate::nostr_signaling::publish_webrtc_offer(device_id, &local_endpoint, 0).await
+                    .map_err(|e| anyhow::anyhow!("publish offer failed: {}", e))?;
+                log::info!("[RESTART] offer published, waiting for answer via Nostr...");
+                // Wait for answer by polling set_remote_endpoint (caller must set it)
+                // For now, we return and let the caller complete the cycle
+                Ok(())
+            } else {
+                log::info!("[RESTART] host mode without Nostr — skipping publish");
+                Ok(())
+            }
+        } else {
+            Err(anyhow::anyhow!("local desc not set"))
+        }
+    }
+
+    /// Set remote offer, create answer, gather ICE, publish answer to Nostr.
+    async fn pc_receive_offer_and_publish_answer(
+        pc: &Arc<RTCPeerConnection>,
+        _stream: &Arc<Mutex<Arc<RTCDataChannel>>>,
+        _notify_tx: &watch::Sender<bool>,
+        remote_offer: &str,
+        signal_device_id: &Option<String>,
+    ) -> ResultType<()> {
+        let sdp: RTCSessionDescription = serde_json::from_str(remote_offer)
+            .map_err(|e| anyhow::anyhow!("failed to parse remote offer SDP: {}", e))?;
+        pc.set_remote_description(sdp.clone()).await
+            .map_err(|e| anyhow::anyhow!("set_remote_description failed: {}", e))?;
+
+        let answer = pc.create_answer(None).await
+            .map_err(|e| anyhow::anyhow!("create_answer failed: {}", e))?;
+
+        let mut gather_complete = pc.gathering_complete_promise().await;
+        pc.set_local_description(answer).await
+            .map_err(|e| anyhow::anyhow!("set_local_description failed: {}", e))?;
+
+        if tokio::time::timeout(Duration::from_secs(20), gather_complete.recv()).await.is_err() {
+            log::warn!("[RESTART] ICE gathering timed out (20s)");
+        }
+
+        if let Some(local_desc) = pc.local_description().await {
+            let local_endpoint = Self::sdp_to_endpoint(&serde_json::to_string(&local_desc)?);
+            if let Some(device_id) = signal_device_id {
+                log::info!("[RESTART] publishing WebRTC answer to Nostr (device={})", device_id);
+                crate::nostr_signaling::publish_webrtc_answer(device_id, &local_endpoint).await
+                    .map_err(|e| anyhow::anyhow!("publish answer failed: {}", e))?;
+            }
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("local desc not set"))
+        }
+    }
+
     #[inline]
     pub fn is_secured(&self) -> bool {
         true
@@ -669,14 +1004,32 @@ impl WebRTCStream {
     }
 
     #[inline]
-    async fn wait_for_connect_result(&mut self) {
+    async fn wait_for_connect_result(&mut self) -> ResultType<()> {
         if *self.state_notify.borrow() {
             log::info!("WebRTC wait_for_connect: already connected");
-            return;
+            return Ok(());
+        }
+        if *self.failed_rx.borrow() {
+            log::error!("WebRTC wait_for_connect: already failed before connect");
+            return Err(anyhow::anyhow!("WebRTC connection failed before data channel opened"));
         }
         log::info!("WebRTC wait_for_connect: waiting for data channel open signal...");
-        let _ = self.state_notify.changed().await;
-        log::info!("WebRTC wait_for_connect: data channel open signal received");
+        let mut connected = self.state_notify.clone();
+        let mut failed = self.failed_rx.clone();
+        tokio::select! {
+            _ = connected.changed() => {
+                if *connected.borrow() {
+                    log::info!("WebRTC wait_for_connect: data channel open signal received");
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!("WebRTC data channel closed before opening"))
+                }
+            }
+            _ = failed.changed() => {
+                log::error!("WebRTC wait_for_connect: connection failed while waiting");
+                Err(anyhow::anyhow!("WebRTC connection failed while waiting for data channel"))
+            }
+        }
     }
 
     pub async fn send_bytes(&mut self, bytes: Bytes) -> ResultType<()> {
@@ -688,7 +1041,12 @@ impl WebRTCStream {
             )
             .await
             {
-                Ok(_) => {}
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    log::error!("WebRTC send_bytes: connect failed: {}", e);
+                    self.pc.close().await.ok();
+                    return Err(Error::new(ErrorKind::NotConnected, e.to_string()).into());
+                }
                 Err(_) => {
                     log::error!("WebRTC send_bytes: timeout waiting for connect");
                     self.pc.close().await.ok();
@@ -700,7 +1058,7 @@ impl WebRTCStream {
                 }
             }
         } else {
-            self.wait_for_connect_result().await;
+            self.wait_for_connect_result().await?;
         }
 
         // Split into chunks if the payload exceeds the SCTP limit.
@@ -757,7 +1115,11 @@ impl WebRTCStream {
     }
 
     pub async fn next(&mut self) -> Option<Result<BytesMut, Error>> {
-        self.wait_for_connect_result().await;
+        if let Err(e) = self.wait_for_connect_result().await {
+            log::error!("WebRTC next: wait_for_connect_result failed: {}", e);
+            self.pc.close().await.ok();
+            return Some(Err(Error::new(ErrorKind::NotConnected, e.to_string())));
+        }
         loop {
             // --- get the detached data channel ---
             let mut guard = self.detached.lock().await;

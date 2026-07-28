@@ -227,7 +227,7 @@ class _ConnectionPageState extends State<ConnectionPage>
     _idFocusNode.addListener(onFocusChanged);
     if (_idController.text.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
-        final lastRemoteId = await bind.mainGetLastRemoteId();
+        final lastRemoteId = stripNostrUri(await bind.mainGetLastRemoteId());
         if (lastRemoteId != _idController.id) {
           setState(() {
             _idController.id = lastRemoteId;
@@ -347,7 +347,7 @@ class _ConnectionPageState extends State<ConnectionPage>
   /// prompts for password, then initiates a WebRTC connection.
   Future<void> _onNostrConnect() async {
     if (_nostrConnecting) return;
-    final deviceId = _idController.id.replaceAll(' ', '');
+    final deviceId = stripNostrUri(_idController.id.replaceAll(' ', ''));
     if (deviceId.isEmpty) {
       showToast('Enter a Device ID');
       return;

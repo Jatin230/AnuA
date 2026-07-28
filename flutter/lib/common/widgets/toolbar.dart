@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/mobile/pages/file_manager_page.dart';
+import 'package:flutter_hbb/desktop/pages/file_manager_page.dart' as desktop_fm;
+
 import 'package:flutter_hbb/common/widgets/dialog.dart';
 import 'package:flutter_hbb/common/widgets/login.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -171,26 +173,34 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
       {bool isFileTransfer = false,
       bool isViewCamera = false,
       bool isTcpTunneling = false,
-      bool isTerminal = false}) {
+      bool isTerminal = false,
+      bool forceRelay = false}) {
     final connToken = bind.sessionGetConnToken(sessionId: ffi.sessionId);
     connect(context, id,
         isFileTransfer: isFileTransfer,
         isViewCamera: isViewCamera,
         isTerminal: isTerminal,
         isTcpTunneling: isTcpTunneling,
-        connToken: connToken);
+        connToken: connToken,
+        forceRelay: forceRelay);
   }
 
   if (isDefaultConn && isDesktop) {
     v.add(
       TTextMenu(
           child: Text(translate('Transfer file')),
-          onPressed: () => connectWithToken(isFileTransfer: true)),
+          onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) => desktop_fm.FileManagerPage(
+                      id: id,
+                      reuseSession: true,
+                      existingFfi: ffi)))),
     );
     v.add(
       TTextMenu(
           child: Text(translate('View camera')),
-          onPressed: () => connectWithToken(isViewCamera: true)),
+          onPressed: () => connectWithToken(isViewCamera: true, forceRelay: true)),
     );
     v.add(
       TTextMenu(
