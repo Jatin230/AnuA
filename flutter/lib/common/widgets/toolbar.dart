@@ -165,6 +165,15 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
                 builder: (BuildContext context) => FileManagerPage(
                     id: id,
                     reuseSession: true)))));
+    v.add(TTextMenu(
+        child: Text(translate('Print')),
+        onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (BuildContext context) => FileManagerPage(
+                    id: id,
+                    reuseSession: true,
+                    pickToPrint: true)))));
   }
 
   // https://github.com/anuvadini/anuvadini/pull/9731
@@ -196,6 +205,18 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
                       id: id,
                       reuseSession: true,
                       existingFfi: ffi)))),
+    );
+    v.add(
+      TTextMenu(
+          child: Text(translate('Print')),
+          onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (context) => desktop_fm.FileManagerPage(
+                      id: id,
+                      reuseSession: true,
+                      existingFfi: ffi,
+                      pickToPrint: true)))),
     );
     v.add(
       TTextMenu(

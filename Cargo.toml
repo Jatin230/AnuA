@@ -210,7 +210,7 @@ jni = { path = "libs/jni" }
 android-wakelock = { path = "libs/android-wakelock" }
 
 [workspace]
-members = ["libs/scrap", "libs/hbb_common", "libs/enigo", "libs/clipboard", "libs/virtual_display", "libs/virtual_display/dylib", "libs/portable", "libs/remote_printer"]
+members = ["libs/scrap", "libs/hbb_common", "libs/enigo", "libs/clipboard", "libs/virtual_display", "libs/virtual_display/dylib", "libs/portable", "libs/remote_printer", "libs/printer_driver_adapter", "libs/printer_driver_render_filter"]
 exclude = ["vdi/host", "examples/custom_plugin"]
 
 # Redirect git deps to local paths so Android builds work fully offline

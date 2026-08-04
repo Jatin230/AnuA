@@ -3029,12 +3029,30 @@ pub fn main_get_common(key: String) -> String {
                 Err(e) => e.to_string(),
             };
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
+        {
+            return match crate::platform::macos::is_rd_printer_installed(&get_app_name()) {
+                Ok(r) => r.to_string(),
+                Err(e) => e.to_string(),
+            };
+        }
+        #[cfg(target_os = "linux")]
+        {
+            return match crate::platform::linux::is_rd_printer_installed(&get_app_name()) {
+                Ok(r) => r.to_string(),
+                Err(e) => e.to_string(),
+            };
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         return false.to_string();
     } else if key == "is-support-printer-driver" {
         #[cfg(target_os = "windows")]
         return crate::platform::is_win_10_or_greater().to_string();
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
+        return true.to_string();
+        #[cfg(target_os = "linux")]
+        return true.to_string();
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         return false.to_string();
     } else if key == "transfer-job-id" {
         return hbb_common::fs::get_next_job_id().to_string();
@@ -3110,8 +3128,6 @@ pub fn main_set_common(_key: String, _value: String) {
                 }
             };
             if success {
-                // Use `ipc` to notify the server process to update the install option in the registry.
-                // Because `install_update_printer()` may prompt for permissions, there is no need to prompt again here.
                 if let Err(e) = crate::ipc::set_install_option(
                     crate::platform::REG_NAME_INSTALL_PRINTER.to_string(),
                     "1".to_string(),
@@ -3119,6 +3135,50 @@ pub fn main_set_common(_key: String, _value: String) {
                     log::error!("Failed to set install printer option: {}", e);
                 }
             }
+            let data = HashMap::from([
+                ("name", serde_json::json!("install-printer-res")),
+                ("success", serde_json::json!(success)),
+                ("msg", serde_json::json!(msg)),
+            ]);
+            let _res = flutter::push_global_event(
+                flutter::APP_TYPE_MAIN,
+                serde_json::ser::to_string(&data).unwrap_or("".to_owned()),
+            );
+        });
+    }
+    #[cfg(target_os = "macos")]
+    if _key == "install-printer" {
+        std::thread::spawn(move || {
+            let (success, msg) = match crate::platform::macos::install_update_printer(&get_app_name()) {
+                Ok(_) => (true, "".to_owned()),
+                Err(e) => {
+                    let err = e.to_string();
+                    log::error!("Failed to install printer: {}", &err);
+                    (false, err)
+                }
+            };
+            let data = HashMap::from([
+                ("name", serde_json::json!("install-printer-res")),
+                ("success", serde_json::json!(success)),
+                ("msg", serde_json::json!(msg)),
+            ]);
+            let _res = flutter::push_global_event(
+                flutter::APP_TYPE_MAIN,
+                serde_json::ser::to_string(&data).unwrap_or("".to_owned()),
+            );
+        });
+    }
+    #[cfg(target_os = "linux")]
+    if _key == "install-printer" {
+        std::thread::spawn(move || {
+            let (success, msg) = match crate::platform::linux::install_update_printer(&get_app_name()) {
+                Ok(_) => (true, "".to_owned()),
+                Err(e) => {
+                    let err = e.to_string();
+                    log::error!("Failed to install printer: {}", &err);
+                    (false, err)
+                }
+            };
             let data = HashMap::from([
                 ("name", serde_json::json!("install-printer-res")),
                 ("success", serde_json::json!(success)),

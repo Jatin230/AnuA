@@ -594,8 +594,8 @@ class _NostrQrDialogState extends State<_NostrQrDialog> {
           size: 180,
           backgroundColor: Colors.white,
           errorCorrectionLevel: QrErrorCorrectLevel.H,
-          eyeStyle: QrEyeStyle(color: Colors.deepPurple[600], eyeShape: QrEyeShape.square),
-          dataModuleStyle: QrDataModuleStyle(color: Colors.deepPurple[400], dataModuleShape: QrDataModuleShape.square),
+          eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
+          dataModuleStyle: QrDataModuleStyle(color: Colors.black, dataModuleShape: QrDataModuleShape.square),
           embeddedImage: const AssetImage('assets/logo.png'),
           embeddedImageStyle: const QrEmbeddedImageStyle(
             size: Size(40, 40),

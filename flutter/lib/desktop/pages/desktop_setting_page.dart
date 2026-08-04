@@ -77,7 +77,7 @@ class DesktopSettingPage extends StatefulWidget {
       SettingsTabKey.plugin,
     if (!bind.isDisableAccount()) SettingsTabKey.account,
     SettingsTabKey.general,
-    if (isWindows &&
+    if ((isWindows || isMacOS || isLinux) &&
         bind.mainGetBuildinOption(key: kOptionHideRemotePrinterSetting) != 'Y')
       SettingsTabKey.printer,
   ];
@@ -2258,9 +2258,6 @@ class __PrinterState extends State<_Printer> {
       ).marginOnly(left: _kCardLeftMargin);
     }
 
-    final installed = bind.mainIsInstalled();
-    // `is-printer-installed` may fail, but it's rare case.
-    // Add additional error message here if it's really needed.
     final isPrinterInstalled =
         bind.mainGetCommonSync(key: 'is-printer-installed') == 'true';
 
@@ -2269,9 +2266,8 @@ class __PrinterState extends State<_Printer> {
       children.add(tipOsNotSupported());
     } else {
       children.addAll([
-        if (!installed) tipClientNotInstalled(),
-        if (installed && !isPrinterInstalled) tipPrinterNotInstalled(),
-        if (installed && isPrinterInstalled) tipReady()
+        if (!isPrinterInstalled) tipPrinterNotInstalled(),
+        if (isPrinterInstalled) tipReady()
       ]);
     }
     return _Card(title: 'Outgoing Print Jobs', children: children);

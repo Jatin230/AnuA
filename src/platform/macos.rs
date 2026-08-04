@@ -29,6 +29,7 @@ use objc::{class, msg_send, sel, sel_impl};
 use scrap::{libc::c_void, quartz::ffi::*};
 use std::{
     collections::HashMap,
+    os::unix::fs::PermissionsExt,
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -1203,6 +1204,111 @@ impl WakeLock {
             .map(|h| h.set_display(display))
             .ok_or(anyhow!("no AwakeHandle"))?
     }
+}
+
+pub fn send_raw_data_to_printer(printer_name: Option<String>, data: Vec<u8>) -> ResultType<()> {
+    let tmp_dir = std::env::temp_dir();
+    let tmp_file = tmp_dir.join(format!(
+        "anuvadini_print_{}.pdf",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+    std::fs::write(&tmp_file, &data)?;
+    let mut cmd = Command::new("lpr");
+    if let Some(ref name) = printer_name {
+        if !name.is_empty() {
+            cmd.arg("-P").arg(name);
+        }
+    }
+    let output = cmd.arg(tmp_file.to_str().unwrap()).output()?;
+    std::fs::remove_file(&tmp_file).ok();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("lpr failed: {}", stderr);
+    }
+    Ok(())
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var("HOME").map(PathBuf::from).unwrap_or_default()
+}
+
+pub fn is_rd_printer_installed(_app_name: &str) -> ResultType<bool> {
+    let output = Command::new("lpstat").arg("-p").output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.contains("Anuvadini Printer") || stdout.contains("anuvadini_printer"))
+}
+
+pub fn install_update_printer(app_name: &str) -> ResultType<()> {
+    let cups_dir = PathBuf::from("/usr/libexec/cups/backend");
+    let alt_cups_dir = PathBuf::from("/usr/lib/cups/backend");
+    let backend_dir = if cups_dir.exists() { cups_dir } else { alt_cups_dir };
+    if !backend_dir.exists() {
+        bail!("CUPS backend directory not found");
+    }
+    let backend_script = backend_dir.join("anuvadini");
+    let backend_content = format!(
+        r#"#!/bin/bash
+# Anuvadini remote printer CUPS backend
+# Installed by {app_name}
+cat > "$HOME/.local/share/{app_name}/printjobs/$(date +%s%N).pdf"
+exit 0
+"#
+    );
+    // Create spool directory
+    let spool_dir = home_dir()
+        .join(format!(".local/share/{app_name}/printjobs"));
+    std::fs::create_dir_all(&spool_dir)?;
+    // Write backend script
+    std::fs::write(&backend_script, backend_content.as_bytes())?;
+    std::fs::set_permissions(&backend_script, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+    // Register printer via CUPS
+    let output = Command::new("lpadmin")
+        .args([
+            "-p", "Anuvadini_Printer",
+            "-E",
+            "-v", "anuvadini://remote",
+            "-m", "everywhere",
+            "-L", "Remote printing printer for Anuvadini",
+        ])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // lpadmin may fail without lpadmin group; try with cupsctl
+        log::warn!("lpadmin failed (may need admin rights): {}", stderr);
+        // Try via osascript for admin prompt
+        let script = format!(
+            r#"do shell script "/usr/sbin/lpadmin -p Anuvadini_Printer -E -v anuvadini://remote -m everywhere -L 'Remote printing printer for Anuvadini'" with prompt "Anuvadini needs admin rights to install the remote printer" with administrator privileges"#
+        );
+        let osa = Command::new("osascript").arg("-e").arg(&script).output()?;
+        if !osa.status.success() {
+            let err = String::from_utf8_lossy(&osa.stderr);
+            bail!("Failed to register printer: {}", err);
+        }
+    }
+    Ok(())
+}
+
+pub fn uninstall_printer(app_name: &str) -> ResultType<()> {
+    // Delete printer
+    Command::new("lpadmin")
+        .args(["-x", "Anuvadini_Printer"])
+        .output()
+        .ok();
+    // Remove backend
+    for dir in ["/usr/libexec/cups/backend", "/usr/lib/cups/backend"] {
+        let backend = PathBuf::from(dir).join("anuvadini");
+        if backend.exists() {
+            std::fs::remove_file(&backend).ok();
+        }
+    }
+    // Remove spool directory
+    let spool_dir = home_dir()
+        .join(format!(".local/share/{app_name}/printjobs"));
+    std::fs::remove_dir_all(&spool_dir).ok();
+    Ok(())
 }
 
 fn get_bundle_id() -> Option<String> {

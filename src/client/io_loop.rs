@@ -1708,7 +1708,7 @@ impl<T: InvokeUiSession> Remote<T> {
                                             "Receive print job done, data len: {:?}",
                                             printer_data.as_ref().map(|d| d.len()).unwrap_or(0)
                                         );
-                                        #[cfg(target_os = "windows")]
+                                        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
                                         if let Some(data) = printer_data {
                                             let printer_name = self
                                                 .handler

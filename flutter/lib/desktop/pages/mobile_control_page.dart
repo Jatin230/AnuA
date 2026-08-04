@@ -5,13 +5,21 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/common/widgets/remote_input.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/input_model.dart';
+import 'package:flutter_hbb/models/server_model.dart';
+import 'package:flutter_hbb/common/formatter/id_formatter.dart';
+import 'package:flutter_hbb/mobile/pages/webrtc_signaling.dart'
+    show lookupDeviceById;
+import 'package:flutter_hbb/utils/multi_window_manager.dart'
+    show anuvadiniWinManager;
 import 'package:get/get.dart';
+import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter_hbb/debug_agent_log.dart';
 
@@ -32,6 +40,8 @@ class _MobileControlPageState extends State<MobileControlPage> {
   String? _error;
   bool _loading = false;
   final TextEditingController _manualIpController = TextEditingController();
+  final TextEditingController _remoteIdController = TextEditingController();
+  bool _nostrConnectMode = false;
   final List<Map<String, String>> _registeredDevices = [];
   final Map<String, FFI> _activeSessions = {};
   final Map<String, String> _sessionStatus = {};
@@ -112,6 +122,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
     _listenerProbe?.cancel();
     _imageTimeout?.cancel();
     _manualIpController.dispose();
+    _remoteIdController.dispose();
     for (final ffi in _activeSessions.values) {
       ffi.close();
     }
@@ -447,7 +458,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
   Widget _buildScaffold() {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mobile Command Center'),
+        title: const Text('Pair Device'),
         backgroundColor: MyTheme.accent,
       ),
       body: Row(
@@ -488,8 +499,250 @@ class _MobileControlPageState extends State<MobileControlPage> {
               const Text('Setup', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ],
           ),
+          _buildConnectionCard(),
+          const SizedBox(height: 10),
+          _buildRemoteConnectCard(),
+          const SizedBox(height: 10),
           _buildSetupCard(),
         ],
+      ),
+    );
+  }
+
+  Future<void> _onRemoteConnect() async {
+    if (_nostrConnectMode) {
+      final deviceId =
+          stripNostrUri(_remoteIdController.text.replaceAll(' ', ''));
+      if (deviceId.isEmpty) {
+        showToast('Enter a Device ID');
+        return;
+      }
+      await _onNostrConnectRemote(deviceId);
+    } else {
+      final id = _remoteIdController.text.trim();
+      if (id.isEmpty) {
+        showToast('Enter a Remote ID');
+        return;
+      }
+      connect(context, id);
+    }
+  }
+
+  Future<void> _onNostrConnectRemote(String deviceId) async {
+    showToast('Looking up device $deviceId on Nostr...');
+    final result = await lookupDeviceById(deviceId);
+    if (result == null) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Device Not Found'),
+          content: Text(
+            'Device "$deviceId" was not found on Nostr relays.\n\n'
+            'Make sure the target device has the Nostr tab open.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final pwdController = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enter Password'),
+        content: TextField(
+          controller: pwdController,
+          obscureText: true,
+          decoration: const InputDecoration(hintText: 'Remote device password'),
+          onSubmitted: (v) => Navigator.pop(ctx, v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, pwdController.text),
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+    pwdController.dispose();
+
+    if (password == null) return;
+
+    final encodedOffer = base64Encode(utf8.encode(result.offer));
+    final uri =
+        'nostr-webrtc://${result.deviceId}?offer=$encodedOffer#${result.pubkey}';
+    showToast('Connecting via Nostr WebRTC...');
+    await anuvadiniWinManager.newRemoteDesktop(
+      uri,
+      password: password.isNotEmpty ? password : null,
+      nostrMode: 'control',
+    );
+  }
+
+  Widget _buildRemoteConnectCard() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Control Remote Desktop',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _remoteIdController,
+              autocorrect: false,
+              enableSuggestions: false,
+              style: const TextStyle(fontSize: 18),
+              decoration: const InputDecoration(
+                hintText: 'Enter Remote ID',
+                border: OutlineInputBorder(),
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+              onSubmitted: (_) => _onRemoteConnect(),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: () =>
+                      setState(() => _nostrConnectMode = !_nostrConnectMode),
+                  child: Container(
+                    height: 28,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color:
+                            _nostrConnectMode ? Colors.green : Colors.grey,
+                      ),
+                      color: _nostrConnectMode
+                          ? Colors.green.withOpacity(0.15)
+                          : Colors.transparent,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _nostrConnectMode ? Icons.wifi : Icons.wifi_off,
+                          size: 14,
+                          color:
+                              _nostrConnectMode ? Colors.green : Colors.grey,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Nostr',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                _nostrConnectMode ? Colors.green : Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: _onRemoteConnect,
+                  child: Text(_nostrConnectMode ? 'Nostr Connect' : 'Connect'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectionCard() {
+    return ChangeNotifierProvider<ServerModel>.value(
+      value: gFFI.serverModel,
+      child: Consumer<ServerModel>(
+        builder: (context, model, child) {
+          final showOneTime = model.verificationMethod != kUsePermanentPassword;
+          return Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Device ID',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  const SizedBox(height: 4),
+                  GestureDetector(
+                    onDoubleTap: () {
+                      Clipboard.setData(ClipboardData(text: model.serverId.text));
+                      showToast(translate("Copied"));
+                    },
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            model.serverId.text,
+                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                        const Icon(Icons.copy, size: 16, color: Colors.grey),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 20),
+                  Row(
+                    children: [
+                      const Text('One-time Password',
+                          style: TextStyle(fontSize: 14)),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.refresh, size: 18),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => bind.mainUpdateTemporaryPassword(),
+                        tooltip: translate('Refresh Password'),
+                      ),
+                    ],
+                  ),
+                  GestureDetector(
+                    onDoubleTap: () {
+                      if (showOneTime) {
+                        Clipboard.setData(
+                            ClipboardData(text: model.serverPasswd.text));
+                        showToast(translate("Copied"));
+                      }
+                    },
+                    child: Text(model.serverPasswd.text,
+                        style: const TextStyle(fontSize: 16)),
+                  ),
+                  if (!showOneTime)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'One-time password disabled: a permanent password is in use.',
+                        style: TextStyle(
+                            fontSize: 10, color: Colors.orange[800]),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -535,8 +788,8 @@ class _MobileControlPageState extends State<MobileControlPage> {
                   size: 200,
                   backgroundColor: Colors.white,
                   errorCorrectionLevel: QrErrorCorrectLevel.H,
-                  eyeStyle: QrEyeStyle(color: Colors.deepPurple[600], eyeShape: QrEyeShape.square),
-                  dataModuleStyle: QrDataModuleStyle(color: Colors.deepPurple[400], dataModuleShape: QrDataModuleShape.square),
+                  eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
+                  dataModuleStyle: QrDataModuleStyle(color: Colors.black, dataModuleShape: QrDataModuleShape.square),
                   embeddedImage: const AssetImage('assets/logo.png'),
                   embeddedImageStyle: const QrEmbeddedImageStyle(
                     size: Size(44, 44),
@@ -638,8 +891,8 @@ class _MobileControlPageState extends State<MobileControlPage> {
                   size: 150,
                   backgroundColor: Colors.white,
                   errorCorrectionLevel: QrErrorCorrectLevel.H,
-                  eyeStyle: QrEyeStyle(color: Colors.deepPurple[600], eyeShape: QrEyeShape.square),
-                  dataModuleStyle: QrDataModuleStyle(color: Colors.deepPurple[400], dataModuleShape: QrDataModuleShape.square),
+                  eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
+                  dataModuleStyle: QrDataModuleStyle(color: Colors.black, dataModuleShape: QrDataModuleShape.square),
                   embeddedImage: const AssetImage('assets/logo.png'),
                   embeddedImageStyle: const QrEmbeddedImageStyle(
                     size: Size(36, 36),

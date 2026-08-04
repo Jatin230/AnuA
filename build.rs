@@ -84,6 +84,8 @@ fn main() {
     build_manifest();
     #[cfg(windows)]
     build_windows();
+    #[cfg(windows)]
+    build_printer_driver_adapter();
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
     if target_os == "macos" {
         #[cfg(target_os = "macos")]
@@ -91,4 +93,27 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
     }
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+#[cfg(windows)]
+fn build_printer_driver_adapter() {
+    // Only copy the DLL — building happens in build.ps1 before this cargo invocation
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
+    let target_dir = std::path::Path::new(&manifest_dir).join("target").join(&profile);
+    let dll_path = target_dir.join("printer_driver_adapter.dll");
+
+    if !dll_path.exists() {
+        println!("cargo:warning=printer_driver_adapter.dll not found, skipping driver copy. Run build.ps1 to build it.");
+        return;
+    }
+
+    // Copy to drivers directory for installation via INF
+    let drivers_dir = std::path::Path::new(&manifest_dir).join("drivers").join("AnuvadiniPrinterDriver");
+    let _ = std::fs::create_dir_all(&drivers_dir);
+    if let Err(e) = std::fs::copy(&dll_path, drivers_dir.join("printer_driver_adapter.dll")) {
+        println!("cargo:warning=Failed to copy printer_driver_adapter.dll to drivers: {}", e);
+    }
+
+    println!("cargo:rerun-if-changed=libs/printer_driver_adapter/src/lib.rs");
 }

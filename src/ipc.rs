@@ -374,7 +374,7 @@ pub enum Data {
     HwCodecConfig(Option<String>),
     RemoveTrustedDevices(Vec<Bytes>),
     ClearTrustedDevices,
-    #[cfg(all(target_os = "windows", feature = "flutter"))]
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     PrinterData(Vec<u8>),
     InstallOption(Option<(String, String)>),
     #[cfg(all(

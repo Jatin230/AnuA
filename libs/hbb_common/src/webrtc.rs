@@ -9,6 +9,7 @@ use webrtc::api::setting_engine::{SettingEngine, SctpMaxMessageSize};
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice::mdns::MulticastDnsMode;
+use webrtc::ice::network_type::NetworkType;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_gatherer_state::RTCIceGathererState;
 use webrtc::ice_transport::ice_server::RTCIceServer;
@@ -83,10 +84,11 @@ const CHUNK_MAGIC: u8 = 0xAB;
 // https://stackoverflow.com/questions/72805316/determine-nat-mapping-behaviour-using-two-stun-servers
 // luckily nextcloud supports two ports for STUN
 // unluckily webrtc-rs does not use the same port to do the STUN request
-static DEFAULT_ICE_SERVERS: [&str; 3] = [
+static DEFAULT_ICE_SERVERS: [&str; 4] = [
     "stun:stun.cloudflare.com:3478",
     "stun:stun.nextcloud.com:3478",
     "stun:stun.nextcloud.com:443",
+    "stun:stun6.l.google.com:19302",
 ];
 
 lazy_static::lazy_static! {
@@ -353,6 +355,7 @@ impl WebRTCStream {
         let mut s = SettingEngine::default();
         s.detach_data_channels();
         s.set_ice_multicast_dns_mode(MulticastDnsMode::Disabled);
+        s.set_network_types(vec![NetworkType::Udp4, NetworkType::Udp6]);
         // Allow sending frames larger than the default 64 KB SCTP limit.
         // VP9/AV1 keyframes on a 1080p display routinely exceed this,
         // causing "outbound packet larger than maximum message size" errors.
@@ -750,6 +753,7 @@ impl WebRTCStream {
         let mut s = SettingEngine::default();
         s.detach_data_channels();
         s.set_ice_multicast_dns_mode(MulticastDnsMode::Disabled);
+        s.set_network_types(vec![NetworkType::Udp4, NetworkType::Udp6]);
         s.set_sctp_max_message_size_can_send(SctpMaxMessageSize::Unbounded);
         let api = APIBuilder::new().with_setting_engine(s).build();
 

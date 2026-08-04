@@ -9,7 +9,8 @@ import 'package:flutter_hbb/common.dart';
 import 'package:flutter_hbb/common/widgets/animated_rotation_widget.dart';
 import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
-import 'package:flutter_hbb/desktop/pages/connection_page.dart';
+import 'package:flutter_hbb/desktop/pages/connection_page.dart'
+    show OnlineStatusWidget;
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/pages/mobile_control_page.dart';
@@ -101,27 +102,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         alignment: Alignment.center,
         child: loadLogo(),
       ),
-      buildTip(context),
-      if (!isOutgoingOnly) buildIDBoard(context),
-      if (!isOutgoingOnly) buildPasswordBoard(context),
-      const SizedBox(height: 10),
-      Center(
-        child: ElevatedButton.icon(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const MobileControlPage()),
-            );
-          },
-          icon: const Icon(Icons.qr_code_scanner, size: 18),
-          label: const Text("Connect Mobile"),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: MyTheme.accent,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          ),
-        ),
-      ),
       const SizedBox(height: 10),
       FutureBuilder<Widget>(
         future: Future.value(
@@ -184,9 +164,198 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   buildRightPane(BuildContext context) {
-    return Container(
-      color: Theme.of(context).scaffoldBackgroundColor,
-      child: ConnectionPage(),
+    return _buildDashboard(context);
+  }
+
+  Widget _buildDashboard(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(left: 24, right: 56, top: 16, bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'What do you want to do?',
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 20),
+          _buildDevicesSection(context),
+          const SizedBox(height: 20),
+          _buildRecentSessionsSection(context),
+          const SizedBox(height: 20),
+          Center(
+            child: ElevatedButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const MobileControlPage()),
+                );
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Connect Device'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: MyTheme.accent,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDevicesSection(BuildContext context) {
+    return ChangeNotifierProvider.value(
+      value: gFFI.serverModel,
+      child: Consumer<ServerModel>(
+        builder: (context, model, child) {
+          final clients = model.clients.where((c) => !c.disconnected).toList();
+          return Card(
+            elevation: 1,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Your Devices',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 12),
+                  _deviceRow(
+                      context,
+                      name: 'This PC',
+                      subtitle: model.serverId.text,
+                      online: true),
+                  ...clients.map((c) => _deviceRow(
+                        context,
+                        name: c.name.isNotEmpty ? c.name : c.peerId,
+                        subtitle: c.peerId,
+                        online: true,
+                      )),
+                  if (clients.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'No other devices connected right now.',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _deviceRow(BuildContext context,
+      {required String name, required String subtitle, required bool online}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(Icons.circle, size: 12,
+              color: online ? Colors.green : Colors.grey),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name,
+                    style: const TextStyle(fontWeight: FontWeight.w500)),
+                if (subtitle.isNotEmpty)
+                  Text(subtitle,
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentSessionsSection(BuildContext context) {
+    return AnimatedBuilder(
+      animation: gFFI.recentPeersModel,
+      builder: (context, _) {
+        final recent = gFFI.recentPeersModel.peers.take(5).toList();
+        return Card(
+          elevation: 1,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Recent Sessions',
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 16)),
+                const SizedBox(height: 12),
+                if (recent.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'No recent sessions yet.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  )
+                else
+                  ...recent.map((peer) {
+                    final name = peer.alias.isNotEmpty
+                        ? peer.alias
+                        : (peer.hostname.isNotEmpty ? peer.hostname : peer.id);
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        children: [
+                          Icon(Icons.circle, size: 12,
+                              color: peer.online ? Colors.green : Colors.grey),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(name,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w500)),
+                                Text(peer.id,
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[600])),
+                              ],
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              connectMainDesktop(
+                                peer.id,
+                                isFileTransfer: false,
+                                isViewCamera: false,
+                                isTerminal: false,
+                                isTcpTunneling: false,
+                                isRDP: false,
+                                password: peer.password.isNotEmpty
+                                    ? peer.password
+                                    : null,
+                                isSharedPassword: peer.password.isNotEmpty,
+                              );
+                            },
+                            child: const Text('Connect'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -465,47 +634,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  buildTip(BuildContext context) {
-    final isOutgoingOnly = bind.isOutgoingOnly();
-    return Padding(
-      padding:
-          const EdgeInsets.only(left: 20.0, right: 16, top: 16.0, bottom: 5),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Column(
-            children: [
-              if (!isOutgoingOnly)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    translate("Your Desktop"),
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ),
-            ],
-          ),
-          SizedBox(
-            height: 10.0,
-          ),
-          if (!isOutgoingOnly)
-            Text(
-              translate("desk_tip"),
-              overflow: TextOverflow.clip,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          if (isOutgoingOnly)
-            Text(
-              translate("outgoing_only_desk_tip"),
-              overflow: TextOverflow.clip,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
         ],
       ),
     );

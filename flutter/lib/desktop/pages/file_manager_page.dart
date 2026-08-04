@@ -16,6 +16,7 @@ import 'package:flutter_hbb/desktop/widgets/menu_button.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/models/file_model.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:printing/printing.dart';
 import 'package:get/get.dart';
 import 'package:flutter_hbb/web/dummy.dart'
     if (dart.library.html) 'package:flutter_hbb/web/web_unique.dart';
@@ -26,6 +27,22 @@ import '../../common.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import '../widgets/popup_menu.dart';
+
+Future<void> printLocalFile(String path) async {
+  try {
+    final file = File(path);
+    if (!await file.exists()) {
+      debugPrint('File not found: $path');
+      return;
+    }
+    final bytes = await file.readAsBytes();
+    await Printing.sharePdf(
+        bytes: bytes,
+        filename: path.split(Platform.pathSeparator).last);
+  } catch (e) {
+    debugPrint('Print error: $e');
+  }
+}
 
 /// status of location bar
 enum LocationStatus {
@@ -61,7 +78,8 @@ class FileManagerPage extends StatefulWidget {
       this.connToken,
       this.forceRelay,
       this.reuseSession = false,
-      this.existingFfi})
+      this.existingFfi,
+      this.pickToPrint = false})
       : super(key: key);
   final String id;
   final String? password;
@@ -71,6 +89,7 @@ class FileManagerPage extends StatefulWidget {
   final DesktopTabController? tabController;
   final bool reuseSession;
   final FFI? existingFfi;
+  final bool pickToPrint;
   final SimpleWrapper<State<FileManagerPage>?> _lastState = SimpleWrapper(null);
 
   FFI get ffi => (_lastState.value! as _FileManagerPageState)._ffi;
@@ -210,11 +229,13 @@ class _FileManagerPageState extends State<FileManagerPage>
                 Flexible(
                     flex: 3,
                     child: dropArea(FileManagerView(
-                        model.localController, _ffi, _mouseFocusScope))),
+                        model.localController, _ffi, _mouseFocusScope,
+                        pickToPrint: widget.pickToPrint))),
               Flexible(
                   flex: 3,
                   child: dropArea(FileManagerView(
-                      model.remoteController, _ffi, _mouseFocusScope))),
+                      model.remoteController, _ffi, _mouseFocusScope,
+                      pickToPrint: widget.pickToPrint))),
               Flexible(flex: 2, child: statusList())
             ],
           ),
@@ -430,7 +451,10 @@ class FileManagerView extends StatefulWidget {
   final FFI _ffi;
   final Rx<MouseFocusScope> _mouseFocusScope;
 
-  FileManagerView(this.controller, this._ffi, this._mouseFocusScope);
+  final bool pickToPrint;
+
+  FileManagerView(this.controller, this._ffi, this._mouseFocusScope,
+      {super.key, this.pickToPrint = false});
 
   @override
   State<StatefulWidget> createState() => _FileManagerViewState();
@@ -1162,7 +1186,15 @@ class _FileManagerViewState extends State<FileManagerView> {
                   onTap: () {
                     controller.renameAction(entry, isLocal);
                   },
-                )
+                ),
+              if (widget.pickToPrint && isLocal && entry.isFile)
+                mod_menu.PopupMenuItem(
+                  child: Text(translate("Print")),
+                  height: CustomPopupMenuTheme.height,
+                  onTap: () {
+                    printLocalFile(entry.path);
+                  },
+                ),
             ];
             if (items.isNotEmpty) {
               rightClickEntry.value = entry;

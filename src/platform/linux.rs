@@ -16,6 +16,7 @@ use libxdo_sys::{self, xdo_t, Window};
 use std::{
     cell::RefCell,
     ffi::{OsStr, OsString},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Child, Command},
     string::String,
@@ -2116,6 +2117,91 @@ const PERMISSION_STORE_IFACE: &str = "org.freedesktop.impl.portal.PermissionStor
 
 /// Clear GNOME shortcuts inhibitor permission via D-Bus.
 /// This allows the permission dialog to be shown again.
+pub fn send_raw_data_to_printer(printer_name: Option<String>, data: Vec<u8>) -> ResultType<()> {
+    let tmp_dir = std::env::temp_dir();
+    let tmp_file = tmp_dir.join(format!(
+        "anuvadini_print_{}.pdf",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+    std::fs::write(&tmp_file, &data)?;
+    let mut cmd = Command::new("lp");
+    if let Some(ref name) = printer_name {
+        if !name.is_empty() {
+            cmd.arg("-d").arg(name);
+        }
+    }
+    let output = cmd.arg(tmp_file.to_str().unwrap()).output()?;
+    std::fs::remove_file(&tmp_file).ok();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("lp failed: {}", stderr);
+    }
+    Ok(())
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var("HOME").map(PathBuf::from).unwrap_or_default()
+}
+
+pub fn is_rd_printer_installed(_app_name: &str) -> ResultType<bool> {
+    let output = Command::new("lpstat").arg("-p").output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.contains("Anuvadini_Printer"))
+}
+
+pub fn install_update_printer(app_name: &str) -> ResultType<()> {
+    let backend_dir = PathBuf::from("/usr/lib/cups/backend");
+    if !backend_dir.exists() {
+        bail!("CUPS backend directory not found");
+    }
+    let backend_script = backend_dir.join("anuvadini");
+    let backend_content = format!(
+        r#"#!/bin/bash
+# Anuvadini remote printer CUPS backend
+# Installed by {app_name}
+cat > "$HOME/.local/share/{app_name}/printjobs/$(date +%s%N).pdf"
+exit 0
+"#
+    );
+    let spool_dir = home_dir()
+        .join(format!(".local/share/{app_name}/printjobs"));
+    std::fs::create_dir_all(&spool_dir)?;
+    std::fs::write(&backend_script, backend_content.as_bytes())?;
+    std::fs::set_permissions(&backend_script, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+    let output = Command::new("lpadmin")
+        .args([
+            "-p", "Anuvadini_Printer",
+            "-E",
+            "-v", "anuvadini://remote",
+            "-m", "everywhere",
+            "-L", "Remote printing printer for Anuvadini",
+        ])
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to register printer (try with sudo): {}", stderr);
+    }
+    Ok(())
+}
+
+pub fn uninstall_printer(app_name: &str) -> ResultType<()> {
+    Command::new("lpadmin")
+        .args(["-x", "Anuvadini_Printer"])
+        .output()
+        .ok();
+    let backend = PathBuf::from("/usr/lib/cups/backend").join("anuvadini");
+    if backend.exists() {
+        std::fs::remove_file(&backend).ok();
+    }
+    let spool_dir = home_dir()
+        .join(format!(".local/share/{app_name}/printjobs"));
+    std::fs::remove_dir_all(&spool_dir).ok();
+    Ok(())
+}
+
 pub fn clear_gnome_shortcuts_inhibitor_permission() -> ResultType<()> {
     let app_id = get_shortcuts_inhibitor_app_id();
     log::info!(

@@ -75,7 +75,7 @@ mod service;
 mod video_qos;
 pub mod video_service;
 
-#[cfg(all(target_os = "windows", feature = "flutter"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub mod printer_service;
 
 pub type Childs = Arc<Mutex<Vec<std::process::Child>>>;
@@ -141,7 +141,7 @@ pub fn new() -> ServerPtr {
             server.add_service(Box::new(input_service::new_window_focus()));
         }
     }
-    #[cfg(all(target_os = "windows", feature = "flutter"))]
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
         match printer_service::init(&crate::get_app_name()) {
             Ok(()) => {
@@ -588,7 +588,10 @@ pub async fn start_server(is_server: bool, no_server: bool) {
         hbb_common::platform::windows::start_cpu_performance_monitor();
     });
 
-    crate::RendezvousMediator::start_all().await;
+    // `start_all` contains an infinite loop (rendezvous mediator + direct server),
+    // so it must run as a background task instead of being awaited, otherwise the
+    // code below (starting the ipc listener / daemon) is never reached.
+    let mediator = tokio::spawn(crate::RendezvousMediator::start_all());
 
     if is_server {
         crate::common::set_server_running(true);
@@ -649,6 +652,9 @@ pub async fn start_server(is_server: bool, no_server: bool) {
             }
         }
     }
+
+    // Keep the process/runtime alive: the mediator task runs forever.
+    mediator.await.ok();
 }
 
 #[cfg(target_os = "macos")]

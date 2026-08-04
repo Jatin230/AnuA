@@ -1,13 +1,29 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_breadcrumb/flutter_breadcrumb.dart';
 import 'package:flutter_hbb/models/file_model.dart';
 import 'package:get/get.dart';
+import 'package:printing/printing.dart';
 import 'package:toggle_switch/toggle_switch.dart';
 
 import '../../common.dart';
 import '../../common/widgets/dialog.dart';
+
+Future<void> printLocalFile(String path) async {
+  try {
+    final file = File(path);
+    if (!await file.exists()) {
+      debugPrint('File not found: $path');
+      return;
+    }
+    final bytes = await file.readAsBytes();
+    await Printing.sharePdf(bytes: bytes, filename: path.split(Platform.pathSeparator).last);
+  } catch (e) {
+    debugPrint('Print error: $e');
+  }
+}
 
 class FileManagerPage extends StatefulWidget {
   FileManagerPage(
@@ -16,13 +32,15 @@ class FileManagerPage extends StatefulWidget {
       this.password,
       this.isSharedPassword,
       this.forceRelay,
-      this.reuseSession = false})
+      this.reuseSession = false,
+      this.pickToPrint = false})
       : super(key: key);
   final String id;
   final String? password;
   final bool? isSharedPassword;
   final bool? forceRelay;
   final bool reuseSession;
+  final bool pickToPrint;
 
   @override
   State<StatefulWidget> createState() => _FileManagerPageState();
@@ -282,10 +300,12 @@ class _FileManagerPageState extends State<FileManagerPage> {
             ? FileManagerView(
                 controller: model.localController,
                 selectMode: selectMode,
+                pickToPrint: widget.pickToPrint,
               )
             : FileManagerView(
                 controller: model.remoteController,
                 selectMode: selectMode,
+                pickToPrint: widget.pickToPrint,
               ),
         bottomSheet: bottomSheet(),
       ));
@@ -438,8 +458,12 @@ class _FileManagerPageState extends State<FileManagerPage> {
 class FileManagerView extends StatefulWidget {
   final FileController controller;
   final Rx<SelectMode> selectMode;
+  final bool pickToPrint;
 
-  FileManagerView({required this.controller, required this.selectMode});
+  FileManagerView(
+      {required this.controller,
+      required this.selectMode,
+      this.pickToPrint = false});
 
   @override
   State<StatefulWidget> createState() => _FileManagerViewState();
@@ -550,7 +574,12 @@ class _FileManagerViewState extends State<FileManagerView> {
                                   PopupMenuItem(
                                     child: Text(translate("Rename")),
                                     value: "rename",
-                                  )
+                                  ),
+                                if (widget.pickToPrint && entries[index].isFile)
+                                  PopupMenuItem(
+                                    child: Text(translate("Print")),
+                                    value: "print",
+                                  ),
                               ];
                             },
                             onSelected: (v) {
@@ -563,10 +592,12 @@ class _FileManagerViewState extends State<FileManagerView> {
                                 widget.selectMode.toggle(isLocal);
                                 setState(() {});
                               } else if (v == "rename") {
-                                controller.renameAction(
-                                    entries[index], isLocal);
-                              }
-                            }),
+                                 controller.renameAction(
+                                     entries[index], isLocal);
+                               } else if (v == "print") {
+                                 printLocalFile(entries[index].path);
+                               }
+                             }),
                 onTap: () {
                   if (showCheckBox) {
                     if (selected) {
