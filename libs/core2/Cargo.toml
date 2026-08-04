@@ -1,0 +1,13 @@
+﻿[package]
+name = "core2"
+version = "0.3.3"
+edition = "2018"
+description = "Experimental no_std io"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+
+[dependencies]
