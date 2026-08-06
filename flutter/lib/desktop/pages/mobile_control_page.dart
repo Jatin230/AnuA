@@ -262,8 +262,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
           ElevatedButton(
             onPressed: () {
               Navigator.of(context, rootNavigator: true).pop();
-              Future.microtask(
-                  () => _authorizePhone(device['id'] ?? _deviceKey(device)));
+              Future.microtask(() => _authorizePhone(device));
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
             child: const Text('Authorize Phone to Control Me'),
@@ -1118,7 +1117,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.laptop, size: 16),
                     label: const Text('Authorize'),
-                    onPressed: () => _authorizePhone(device['id'] ?? key),
+                    onPressed: () => _authorizePhone(device),
                   ),
                 ),
               ],
@@ -1318,11 +1317,12 @@ class _MobileControlPageState extends State<MobileControlPage> {
     if (_activeSessions.isEmpty) _keepAwakeTimer?.cancel();
   }
 
-  void _authorizePhone(String id) {
+  void _authorizePhone(Map<String, String> device) {
+    final id = device['id'] ?? _deviceKey(device);
     setState(() {
-      for (var device in _registeredDevices) {
-        if ((device['id'] ?? device['ip']) == id) {
-          device['authorized'] = 'true';
+      for (var d in _registeredDevices) {
+        if ((d['id'] ?? d['ip']) == id) {
+          d['authorized'] = 'true';
         }
       }
     });
@@ -1342,6 +1342,111 @@ class _MobileControlPageState extends State<MobileControlPage> {
       }
     } catch (e) {
       showToast('Authorize error: $e');
+    }
+    // Ask the phone to connect back and control this laptop over LAN
+    // (direct TCP — no Nostr, no relay). The laptop's temp password lets
+    // the phone log in without a second approval popup.
+    final ip = device['ip'] ?? '';
+    if (ip.isNotEmpty && !ip.startsWith('nostr-webrtc://')) {
+      _requestPhoneToControl(ip);
+    }
+  }
+
+  Future<void> _requestPhoneToControl(String phoneIp) async {
+    try {
+      final socket = await Socket.connect(phoneIp, 21118,
+          timeout: const Duration(seconds: 6));
+      String laptopIp = await _detectLaptopLanIp();
+      if (!_isIpv4(laptopIp)) {
+        showToast('Could not determine the laptop\'s LAN IP.');
+        await socket.close();
+        return;
+      }
+      String tempPassword = '';
+      try {
+        tempPassword = await bind.mainGetTemporaryPassword();
+      } catch (_) {}
+      if (tempPassword.isEmpty) {
+        try {
+          tempPassword = await bind.mainGetPermanentPassword();
+        } catch (_) {}
+      }
+      socket.write('ANUVADINI_CONTROL:$laptopIp:$tempPassword\n');
+      await socket.flush();
+      String response = '';
+      try {
+        await for (final chunk
+            in socket.timeout(const Duration(seconds: 4))) {
+          response += String.fromCharCodes(chunk);
+          if (response.contains('ANUVADINI_ACK')) break;
+        }
+      } catch (_) {}
+      await socket.close();
+      if (!response.contains('ANUVADINI_ACK')) {
+        showToast('Phone did not acknowledge the control request.');
+      }
+    } catch (e) {
+      showToast('Failed to notify phone: $e');
+    }
+  }
+
+  bool _isIpv4(String value) {
+    final parts = value.split('.');
+    if (parts.length != 4) return false;
+    for (final p in parts) {
+      final n = int.tryParse(p);
+      if (n == null || n < 0 || n > 255) return false;
+    }
+    return true;
+  }
+
+  /// Resolve this laptop's best reachable LAN IP straight from the network
+  /// interfaces, falling back to the Pair Device page state. Never returns a
+  /// hostname — only a dotted IPv4 address (or '' when unavailable).
+  Future<String> _detectLaptopLanIp() async {
+    final fromState = _selectedLanIp ?? '';
+    if (_isIpv4(fromState)) return fromState;
+    if (_connectionUrl != null) {
+      final fromUrl = localIpFromUrl(_connectionUrl!);
+      if (_isIpv4(fromUrl)) return fromUrl;
+    }
+    try {
+      final interfaces = await NetworkInterface.list(
+          includeLoopback: false, type: InternetAddressType.IPv4);
+      final candidates = <String>[];
+      for (final iface in interfaces) {
+        final name = iface.name.toLowerCase();
+        if (name.contains('wsl') ||
+            name.contains('virtual') ||
+            name.contains('vbox') ||
+            name.contains('vmware') ||
+            name.contains('vethernet') ||
+            name.contains('hyper-v') ||
+            name.contains('hyperv') ||
+            name.contains('docker') ||
+            name.contains('npcap') ||
+            name.contains('bluetooth') ||
+            name.contains('tun') ||
+            name.contains('tap') ||
+            name.contains('host-only') ||
+            name.contains('loopback')) {
+          continue;
+        }
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback && _isUsableLanIp(addr.address)) {
+            candidates.add(addr.address);
+          }
+        }
+      }
+      if (candidates.isEmpty) return '';
+      final rustIp = bind.mainGetOptionSync(key: 'local-ip-addr');
+      if (rustIp.isNotEmpty && _isUsableLanIp(rustIp)) {
+        if (candidates.contains(rustIp)) return rustIp;
+        candidates.insert(0, rustIp);
+      }
+      return _pickBestLocalIp(candidates);
+    } catch (_) {
+      return '';
     }
   }
 }

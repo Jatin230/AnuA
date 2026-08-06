@@ -445,7 +445,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => _NostrQrDialog(),
+      builder: (ctx) => _MyQrDialog(),
     );
   }
 
@@ -467,40 +467,225 @@ class _ConnectionPageState extends State<ConnectionPage> {
   }
 }
 
-class _NostrQrDialog extends StatefulWidget {
+class _MyQrDialog extends StatefulWidget {
   @override
-  State<_NostrQrDialog> createState() => _NostrQrDialogState();
+  State<_MyQrDialog> createState() => _MyQrDialogState();
 }
 
-class _NostrQrDialogState extends State<_NostrQrDialog> {
+class _MyQrDialogState extends State<_MyQrDialog> {
+  int _tab = 0; // 0 = LAN, 1 = Internet (Nostr)
+
+  // LAN state
+  bool _lanLoading = true;
+  String? _lanError;
+  String? _lanUrl;
+  String? _selectedIp;
+  final List<String> _allIps = [];
+  bool _listenerReady = false;
+  String? _listenerError;
+  Timer? _probeTimer;
+
+  // Internet (Nostr) state
   String? _nostrUri;
-  String? _error;
-  bool _loading = true;
+  String? _nostrError;
+  bool _nostrLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _startHost();
+    _ensureDirectServerEnabled();
+    _setupDirectServerListener();
+    _startListenerProbe();
+    _generateLan();
   }
 
-  Future<void> _startHost() async {
+  @override
+  void dispose() {
+    _probeTimer?.cancel();
+    platformFFI.unregisterEventHandler(
+        'direct_server_status', '_my_qr_dialog_status');
+    platformFFI.unregisterEventHandler(
+        'on_nostr_webrtc_ready', '_my_qr_dialog_ready');
+    platformFFI.unregisterEventHandler(
+        'on_nostr_webrtc_error', '_my_qr_dialog_err');
+    super.dispose();
+  }
+
+  Future<void> _ensureDirectServerEnabled() async {
+    try {
+      if (bind.mainGetOptionSync(key: 'direct-server') != 'Y') {
+        await bind.mainSetOption(key: 'direct-server', value: 'Y');
+      }
+      if (bind.mainGetOptionSync(key: 'stop-service') == 'Y') {
+        await bind.mainSetOption(key: 'stop-service', value: '');
+      }
+    } catch (_) {}
+  }
+
+  void _setupDirectServerListener() {
+    platformFFI.registerEventHandler(
+        'direct_server_status', '_my_qr_dialog_status', (evt) async {
+      final data = evt['data']?.toString() ?? '';
+      if (!mounted) return;
+      if (data == 'started') {
+        setState(() {
+          _listenerReady = true;
+          _listenerError = null;
+        });
+        _probeTimer?.cancel();
+      } else if (data.startsWith('error:')) {
+        setState(() {
+          _listenerReady = false;
+          _listenerError = data.substring(6);
+        });
+      }
+    });
+  }
+
+  void _startListenerProbe() {
+    _probeListener();
+    _probeTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_listenerReady) {
+        _probeTimer?.cancel();
+        return;
+      }
+      _probeListener();
+    });
+  }
+
+  Future<void> _probeListener() async {
+    const port = 21118;
+    for (final host in ['127.0.0.1', if (_selectedIp != null) _selectedIp!]) {
+      try {
+        final socket = await Socket.connect(
+            host, port, timeout: const Duration(milliseconds: 800));
+        await socket.close();
+        if (mounted && !_listenerReady) {
+          setState(() {
+            _listenerReady = true;
+            _listenerError = null;
+          });
+        }
+        return;
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _generateLan() async {
+    setState(() {
+      _lanLoading = true;
+      _lanError = null;
+      _allIps.clear();
+    });
+    try {
+      final interfaces = await NetworkInterface.list(
+          includeLoopback: false, type: InternetAddressType.IPv4);
+      for (final iface in interfaces) {
+        final name = iface.name.toLowerCase();
+        if (name.contains('wsl') ||
+            name.contains('virtual') ||
+            name.contains('vbox') ||
+            name.contains('vmware') ||
+            name.contains('vethernet') ||
+            name.contains('hyper-v') ||
+            name.contains('hyperv') ||
+            name.contains('docker') ||
+            name.contains('npcap') ||
+            name.contains('bluetooth') ||
+            name.contains('tun') ||
+            name.contains('tap') ||
+            name.contains('host-only') ||
+            name.contains('loopback')) {
+          continue;
+        }
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback && _isUsableLanIp(addr.address)) {
+            _allIps.add(addr.address);
+          }
+        }
+      }
+      if (_allIps.isEmpty) {
+        setState(() {
+          _lanError = 'No network IP found. Connect to Wi-Fi.';
+          _lanLoading = false;
+        });
+        return;
+      }
+      final rustIp = bind.mainGetOptionSync(key: 'local-ip-addr');
+      if (rustIp.isNotEmpty &&
+          _isUsableLanIp(rustIp) &&
+          !_allIps.contains(rustIp)) {
+        _allIps.insert(0, rustIp);
+      }
+      final ip = _selectedIp ??
+          (rustIp.isNotEmpty &&
+                  _isUsableLanIp(rustIp) &&
+                  _allIps.contains(rustIp)
+              ? rustIp
+              : _pickBestLocalIp(_allIps));
+      setState(() {
+        _lanUrl = 'anuvadini://direct-tcp:${ip}_port_21118';
+        _selectedIp = ip;
+        _lanLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _lanError = e.toString();
+        _lanLoading = false;
+      });
+    }
+  }
+
+  bool _isUsableLanIp(String ip) {
+    if (ip.startsWith('169.254.')) return false;
+    if (ip.startsWith('192.168.199.')) return false;
+    return true;
+  }
+
+  String _pickBestLocalIp(List<String> ips) {
+    int score(String ip) {
+      if (ip.startsWith('192.168.1.')) return 0;
+      if (ip.startsWith('192.168.0.')) return 1;
+      if (ip.startsWith('192.168.')) return 2;
+      if (ip.startsWith('10.')) return 3;
+      if (ip.startsWith('172.')) return 4;
+      return 5;
+    }
+
+    ips.sort((a, b) => score(a).compareTo(score(b)));
+    return ips.first;
+  }
+
+  Future<void> _startNostrHost() async {
+    setState(() {
+      _nostrLoading = true;
+      _nostrError = null;
+      _nostrUri = null;
+    });
     final completer = Completer<String?>();
 
     platformFFI.registerEventHandler(
-        'on_nostr_webrtc_ready', '_qr_dialog_ready', (evt) async {
+        'on_nostr_webrtc_ready', '_my_qr_dialog_ready', (evt) async {
       if (!completer.isCompleted) completer.complete(evt['uri']);
     });
     platformFFI.registerEventHandler(
-        'on_nostr_webrtc_error', '_qr_dialog_err', (evt) async {
+        'on_nostr_webrtc_error', '_my_qr_dialog_err', (evt) async {
       if (!completer.isCompleted) completer.complete(null);
     });
 
     try {
       await bind.startNostrWebrtcHost();
     } catch (e) {
-      platformFFI.unregisterEventHandler('on_nostr_webrtc_ready', '_qr_dialog_ready');
-      platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_qr_dialog_err');
-      if (mounted) setState(() { _error = 'Failed to start: $e'; _loading = false; });
+      platformFFI.unregisterEventHandler(
+          'on_nostr_webrtc_ready', '_my_qr_dialog_ready');
+      platformFFI.unregisterEventHandler(
+          'on_nostr_webrtc_error', '_my_qr_dialog_err');
+      if (mounted) {
+        setState(() {
+          _nostrError = 'Failed to start: $e';
+          _nostrLoading = false;
+        });
+      }
       return;
     }
 
@@ -509,26 +694,21 @@ class _NostrQrDialogState extends State<_NostrQrDialog> {
       onTimeout: () => null,
     );
 
-    platformFFI.unregisterEventHandler('on_nostr_webrtc_ready', '_qr_dialog_ready');
-    platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_qr_dialog_err');
+    platformFFI.unregisterEventHandler(
+        'on_nostr_webrtc_ready', '_my_qr_dialog_ready');
+    platformFFI.unregisterEventHandler(
+        'on_nostr_webrtc_error', '_my_qr_dialog_err');
 
     if (mounted) {
       setState(() {
         if (uri == null || uri.isEmpty) {
-          _error = 'Timed out generating offer. Try again.';
+          _nostrError = 'Timed out generating offer. Try again.';
         } else {
           _nostrUri = uri;
         }
-        _loading = false;
+        _nostrLoading = false;
       });
     }
-  }
-
-  @override
-  void dispose() {
-    platformFFI.unregisterEventHandler('on_nostr_webrtc_ready', '_qr_dialog_ready');
-    platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_qr_dialog_err');
-    super.dispose();
   }
 
   @override
@@ -537,7 +717,39 @@ class _NostrQrDialogState extends State<_NostrQrDialog> {
       title: const Text('My QR Code'),
       content: SizedBox(
         width: 260,
-        child: _buildContent(),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ChoiceChip(
+                    label: const Text('LAN'),
+                    selected: _tab == 0,
+                    onSelected: (_) => setState(() => _tab = 0),
+                  ),
+                  const SizedBox(width: 8),
+                  ChoiceChip(
+                    label: const Text('Internet'),
+                    selected: _tab == 1,
+                    onSelected: (_) {
+                      setState(() => _tab = 1);
+                      if (!_nostrLoading &&
+                          _nostrUri == null &&
+                          _nostrError == null) {
+                        _startNostrHost();
+                      }
+                    },
+                    selectedColor: Colors.deepPurple.withOpacity(0.2),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (_tab == 0) _buildLanTab() else _buildNostrTab(),
+            ],
+          ),
+        ),
       ),
       actions: [
         TextButton(
@@ -548,8 +760,107 @@ class _NostrQrDialogState extends State<_NostrQrDialog> {
     );
   }
 
-  Widget _buildContent() {
-    if (_loading) {
+  Widget _buildLanTab() {
+    if (_lanLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 12),
+            Text('Finding LAN IP...', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+      );
+    }
+    if (_lanError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, color: Colors.red[400], size: 40),
+            const SizedBox(height: 8),
+            Text(_lanError!,
+                style: const TextStyle(color: Colors.red, fontSize: 12),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _generateLan,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        QrImageView(
+          data: _lanUrl!,
+          version: QrVersions.auto,
+          size: 180,
+          backgroundColor: Colors.white,
+          errorCorrectionLevel: QrErrorCorrectLevel.H,
+          eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
+          dataModuleStyle: QrDataModuleStyle(
+              color: Colors.black, dataModuleShape: QrDataModuleShape.square),
+          embeddedImage: const AssetImage('assets/logo.png'),
+          embeddedImageStyle: const QrEmbeddedImageStyle(
+            size: Size(40, 40),
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text('Same Wi-Fi required',
+            style: TextStyle(fontSize: 10, color: Colors.grey)),
+        const SizedBox(height: 4),
+        if (!_listenerReady)
+          Text(
+            _listenerError != null
+                ? 'Port 21118 unavailable: $_listenerError'
+                : 'Waiting for listener on port 21118…',
+            style: TextStyle(
+              fontSize: 10,
+              color: _listenerError != null ? Colors.red : Colors.orange[800],
+            ),
+            textAlign: TextAlign.center,
+          ),
+        const SizedBox(height: 4),
+        const Text('Start screen sharing to let others connect',
+            style: TextStyle(fontSize: 9, color: Colors.grey),
+            textAlign: TextAlign.center),
+        const SizedBox(height: 4),
+        Text('$_selectedIp:21118',
+            style: const TextStyle(fontSize: 10, color: Colors.grey)),
+        if (_allIps.length > 1) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            alignment: WrapAlignment.center,
+            children: _allIps.map((ip) {
+              final selected = ip == _selectedIp;
+              return ChoiceChip(
+                label: Text(ip, style: const TextStyle(fontSize: 10)),
+                selected: selected,
+                onSelected: (_) {
+                  setState(() {
+                    _selectedIp = ip;
+                    _lanUrl = 'anuvadini://direct-tcp:${ip}_port_21118';
+                  });
+                  _probeListener();
+                },
+              );
+            }).toList(),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildNostrTab() {
+    if (_nostrLoading) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Column(
@@ -562,8 +873,7 @@ class _NostrQrDialogState extends State<_NostrQrDialog> {
         ),
       );
     }
-
-    if (_error != null) {
+    if (_nostrError != null) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Column(
@@ -571,20 +881,18 @@ class _NostrQrDialogState extends State<_NostrQrDialog> {
           children: [
             Icon(Icons.error_outline, color: Colors.red[400], size: 40),
             const SizedBox(height: 8),
-            Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12), textAlign: TextAlign.center),
+            Text(_nostrError!,
+                style: const TextStyle(color: Colors.red, fontSize: 12),
+                textAlign: TextAlign.center),
             const SizedBox(height: 12),
             ElevatedButton(
-              onPressed: () {
-                setState(() { _loading = true; _error = null; _nostrUri = null; });
-                _startHost();
-              },
+              onPressed: _startNostrHost,
               child: const Text('Retry'),
             ),
           ],
         ),
       );
     }
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -595,14 +903,16 @@ class _NostrQrDialogState extends State<_NostrQrDialog> {
           backgroundColor: Colors.white,
           errorCorrectionLevel: QrErrorCorrectLevel.H,
           eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
-          dataModuleStyle: QrDataModuleStyle(color: Colors.black, dataModuleShape: QrDataModuleShape.square),
+          dataModuleStyle: QrDataModuleStyle(
+              color: Colors.black, dataModuleShape: QrDataModuleShape.square),
           embeddedImage: const AssetImage('assets/logo.png'),
           embeddedImageStyle: const QrEmbeddedImageStyle(
             size: Size(40, 40),
           ),
         ),
         const SizedBox(height: 8),
-        const Text('Works over 5G / internet', style: TextStyle(fontSize: 10, color: Colors.deepPurple)),
+        const Text('Works over 5G / internet',
+            style: TextStyle(fontSize: 10, color: Colors.deepPurple)),
         const SizedBox(height: 4),
         const Text(
           'Other phone scans this QR to connect.',
@@ -611,10 +921,7 @@ class _NostrQrDialogState extends State<_NostrQrDialog> {
         ),
         const SizedBox(height: 4),
         ElevatedButton(
-          onPressed: () {
-            setState(() { _loading = true; _error = null; _nostrUri = null; });
-            _startHost();
-          },
+          onPressed: _startNostrHost,
           child: const Text('New QR'),
         ),
       ],

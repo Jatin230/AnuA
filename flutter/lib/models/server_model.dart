@@ -414,13 +414,7 @@ class ServerModel with ChangeNotifier {
         stopService();
       }
     } else {
-      await checkRequestNotificationPermission();
-      if (bind.mainGetLocalOption(key: kOptionDisableFloatingWindow) != 'Y') {
-        await checkFloatingWindowPermission();
-      }
-      if (!await AndroidPermissionManager.check(kManageExternalStorage)) {
-        await AndroidPermissionManager.request(kManageExternalStorage);
-      }
+      await promptPermissions();
       final res = await parent.target?.dialogManager
           .show<bool>((setState, close, context) {
         submit() => close(true);
@@ -443,6 +437,22 @@ class ServerModel with ChangeNotifier {
       if (res == true) {
         startService();
       }
+    }
+  }
+
+  /// Request the runtime permissions the screen-sharing service needs
+  /// (notification, floating window, external storage). The mediaProjection
+  /// consent is requested separately via the system screen-capture dialog, and
+  /// the foreground-service type handling lives on the Kotlin side, so no
+  /// FOREGROUND_SERVICE_MEDIA_PROJECTION runtime request is needed here.
+  Future<void> promptPermissions() async {
+    if (_isStart) return;
+    await checkRequestNotificationPermission();
+    if (bind.mainGetLocalOption(key: kOptionDisableFloatingWindow) != 'Y') {
+      await checkFloatingWindowPermission();
+    }
+    if (!await AndroidPermissionManager.check(kManageExternalStorage)) {
+      await AndroidPermissionManager.request(kManageExternalStorage);
     }
   }
 

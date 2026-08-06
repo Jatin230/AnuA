@@ -204,14 +204,52 @@ class _ScanPageState extends State<ScanPage> {
     if (data.startsWith('anuvadini://')) {
       final address = data.substring('anuvadini://'.length).trim();
       if (address.startsWith('direct-tcp:')) {
-        // Laptop registration QR — register this phone with the laptop
+        // Laptop LAN QR — offer both directions. "Control Laptop" connects
+        // directly over LAN (no Nostr, no relay), relying on the laptop's
+        // approval popup for authorization.
         final hostPart = address.substring('direct-tcp:'.length);
         // Expected format: <ip>_port_<port>
         final match = RegExp(r'^(.+)_port_(\d+)$').firstMatch(hostPart);
         if (match != null) {
           final ip = match.group(1)!;
           final port = int.parse(match.group(2)!);
-          await _registerWithLaptop(context, ip, port);
+          if (!mounted) return;
+          final action = await showDialog<String>(
+            context: context,
+            barrierDismissible: false,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Device Found on LAN'),
+              content: const Text(
+                  'This is a device on your local network.\n\n'
+                  '• Control Device — use this phone to remotely control the '
+                  'device (direct LAN connection).\n\n'
+                  '• Register Phone — let the device control this phone.'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, 'register'),
+                  child: const Text('Register Phone'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                  onPressed: () => Navigator.pop(ctx, 'control'),
+                  child: const Text('Control Device'),
+                ),
+              ],
+            ),
+          );
+          if (!mounted) return;
+          if (action == 'control') {
+            // Direct LAN control — the laptop shows its approval popup and the
+            // session starts after it is accepted.
+            connect(context, address);
+            return;
+          }
+          if (action == 'register') {
+            await _registerWithLaptop(context, ip, port);
+            return;
+          }
+          // Dialog cancelled
+          controller?.resumeCamera();
         } else {
           showToast('Invalid QR code format');
           controller?.resumeCamera();

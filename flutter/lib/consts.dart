@@ -425,6 +425,10 @@ const kRequestIgnoreBatteryOptimizations =
     "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS";
 const kSystemAlertWindow = "android.permission.SYSTEM_ALERT_WINDOW";
 const kAndroid13Notification = "android.permission.POST_NOTIFICATIONS";
+/// Android 14+ requires this runtime permission before starting a
+/// mediaProjection-typed foreground service (MainService).
+const kForegroundServiceMediaProjection =
+    "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION";
 
 /// Android channel invoke type key
 class AndroidChannel {

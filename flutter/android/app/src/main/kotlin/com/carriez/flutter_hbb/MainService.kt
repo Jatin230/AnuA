@@ -359,6 +359,9 @@ class MainService : Service() {
                 getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
             intent.getParcelableExtra<Intent>(EXT_MEDIA_PROJECTION_RES_INTENT)?.let {
+                // Android 14+ requires the FGS to be running with the mediaProjection type
+                // BEFORE MediaProjectionManager.getMediaProjection() is called.
+                createForegroundNotification(useMediaProjectionType = true)
                 mediaProjection =
                     mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, it)
                 // Android 14+ requires registerCallback before using MediaProjection
@@ -672,7 +675,7 @@ class MainService : Service() {
     }
 
     @SuppressLint("UnspecifiedImmutableFlag")
-    private fun createForegroundNotification() {
+    private fun createForegroundNotification(useMediaProjectionType: Boolean = mediaProjection != null) {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
             action = Intent.ACTION_MAIN
@@ -697,9 +700,22 @@ class MainService : Service() {
             .setWhen(System.currentTimeMillis())
             .build()
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && mediaProjection != null) {
-            Log.d(logTag, "startForeground with MEDIA_PROJECTION type")
-            startForeground(DEFAULT_NOTIFY_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (useMediaProjectionType) {
+                // Media projection consent has been granted; use the mediaProjection type.
+                try {
+                    startForeground(DEFAULT_NOTIFY_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+                    return
+                } catch (e: SecurityException) {
+                    Log.w(logTag, "startForeground with MEDIA_PROJECTION type denied, fallback to dataSync: ${e.message}")
+                }
+            }
+            // Before consent (or as fallback), use the benign dataSync type. Using the
+            // plain startForeground here would inherit the manifest mediaProjection type
+            // and throw SecurityException on Android 14+ because the projection consent
+            // appop is not yet held.
+            Log.d(logTag, "startForeground with dataSync type")
+            startForeground(DEFAULT_NOTIFY_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             Log.d(logTag, "startForeground with generic type (or no type)")
             startForeground(DEFAULT_NOTIFY_ID, notification)

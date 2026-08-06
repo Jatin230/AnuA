@@ -843,7 +843,7 @@ async fn direct_server(server: ServerPtr) {
                     .unwrap_or(Config::get_any_listen_addr(true));
                 let server = server.clone();
                 tokio::spawn(async move {
-                    // Peek at the first bytes to detect ANUVADINI_HELLO registration
+                    // Peek at the first bytes to detect ANUVADINI_* commands
                     let mut peek_buf = [0u8; 32];
                     let n = match hbb_common::timeout(3000, async {
                         stream.peek(&mut peek_buf).await
@@ -856,8 +856,8 @@ async fn direct_server(server: ServerPtr) {
                         n,
                         std::str::from_utf8(&peek_buf[..n]).unwrap_or("?")
                     );
-                    if n >= 15 && &peek_buf[..15] == b"ANUVADINI_HELLO" {
-                        handle_mobile_registration(stream, addr).await;
+                    if n >= 10 && &peek_buf[..10] == b"ANUVADINI_" {
+                        handle_anuvadini_command(stream, addr).await;
                     } else {
                         allow_err!(
                             crate::server::create_tcp_connection(
@@ -880,21 +880,43 @@ async fn direct_server(server: ServerPtr) {
     }
 }
 
-/// Handle a mobile device registration handshake.
-/// Protocol: phone → laptop: `ANUVADINI_HELLO:<device_name>:<device_ip>[:<temp_password>]\n`
-///           laptop → phone: `ANUVADINI_ACK\n`
-async fn handle_mobile_registration(mut stream: tokio::net::TcpStream, addr: SocketAddr) {
+/// Dispatch an inbound ANUVADINI_* command received on the direct-server port.
+/// This listener runs on both laptop and phone, so a single dispatcher keeps
+/// the LAN handshake symmetric and fully independent of Nostr/relays.
+/// Protocol:
+///   phone → laptop: `ANUVADINI_HELLO:<device_name>:<device_ip>[:<temp_password>]\n`
+///   laptop → phone: `ANUVADINI_CONTROL:<laptop_ip>[:<temp_password>]\n`
+///   laptop → phone: `ANUVADINI_ACK\n`
+async fn handle_anuvadini_command(mut stream: tokio::net::TcpStream, addr: SocketAddr) {
     let mut buf = vec![0u8; 512];
     let n = match hbb_common::timeout(3000, stream.read(&mut buf)).await {
         Ok(Ok(n)) if n > 0 => n,
         _ => {
-            log::warn!("handle_mobile_registration: failed to read from {}", addr);
+            log::warn!("handle_anuvadini_command: failed to read from {}", addr);
             return;
         }
     };
-
     let msg = String::from_utf8_lossy(&buf[..n]);
     let msg = msg.trim();
+    if msg.starts_with("ANUVADINI_HELLO") {
+        handle_mobile_registration(stream, addr, &msg).await;
+    } else if msg.starts_with("ANUVADINI_CONTROL") {
+        handle_control_request(stream, addr, &msg).await;
+    } else {
+        log::warn!(
+            "Unknown ANUVADINI command from {}: {}",
+            addr,
+            &msg[..msg.len().min(80)]
+        );
+    }
+}
+
+/// Handle a mobile device registration handshake.
+async fn handle_mobile_registration(
+    mut stream: tokio::net::TcpStream,
+    addr: SocketAddr,
+    msg: &str,
+) {
     log::info!("Match! Processing ANUVADINI_HELLO registration...");
 
     // Format: ANUVADINI_HELLO:<name>:<ip>[:<temp_password>]
@@ -940,6 +962,44 @@ async fn handle_mobile_registration(mut stream: tokio::net::TcpStream, addr: Soc
     crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
 
     // Acknowledge the phone so it knows registration succeeded
+    let _ = hbb_common::timeout(2000, stream.write_all(b"ANUVADINI_ACK\n")).await;
+    let _ = stream.flush().await;
+}
+
+/// Handle a laptop → phone "you are authorized, control me" request.
+/// The phone replies with an ACK and pushes `mobile_control_request` to Flutter,
+/// which then opens a direct LAN control session back to the laptop.
+async fn handle_control_request(
+    mut stream: tokio::net::TcpStream,
+    addr: SocketAddr,
+    msg: &str,
+) {
+    log::info!("Match! Processing ANUVADINI_CONTROL request...");
+    // Format: ANUVADINI_CONTROL:<laptop_ip>[:<temp_password>]
+    let parts: Vec<&str> = msg.splitn(4, ':').collect();
+    let laptop_ip       = parts.get(1).copied().unwrap_or("").trim();
+    let temp_password   = parts.get(2).copied().unwrap_or("");
+    log::info!(
+        "Control request received from {} (laptop ip: {})",
+        addr,
+        laptop_ip
+    );
+
+    let data_json = serde_json::json!({
+        "ip": laptop_ip,
+        "password": temp_password,
+    }).to_string();
+
+    let event = serde_json::json!({
+        "name": "mobile_control_request",
+        "data": data_json,
+    }).to_string();
+
+    log::info!("Event pushed to Flutter: mobile_control_request, {}", addr);
+    #[cfg(feature = "flutter")]
+    crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, event);
+
+    // Acknowledge the laptop so it knows the phone received the request.
     let _ = hbb_common::timeout(2000, stream.write_all(b"ANUVADINI_ACK\n")).await;
     let _ = stream.flush().await;
 }

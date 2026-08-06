@@ -227,6 +227,20 @@ void runMobileApp() async {
   await Future.wait([gFFI.abModel.loadCache(), gFFI.groupModel.loadCache()]);
   gFFI.userModel.refreshCurrentUser();
   runApp(App());
+  // The laptop asks this phone to control it over LAN (direct TCP, no Nostr)
+  // by pushing `ANUVADINI_CONTROL` to this phone's direct-server port.
+  platformFFI.registerEventHandler(
+      'mobile_control_request', 'mobile_control_request', (evt) async {
+    try {
+      final data = Map<String, String>.from(json.decode(evt['data'] ?? ''));
+      final ip = data['ip'] ?? '';
+      if (ip.isEmpty) return;
+      final password = data['password'] ?? '';
+      final id = 'direct-tcp:${ip}_port_21118';
+      connect(Get.context!, id,
+          password: password.isNotEmpty ? password : null);
+    } catch (_) {}
+  });
   await initUniLinks();
 }
 

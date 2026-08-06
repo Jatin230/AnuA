@@ -39,10 +39,25 @@ class HomePageState extends State<HomePage> {
     });
   }
 
+  bool _startupPromptShown = false;
+
   @override
   void initState() {
     super.initState();
     initPages();
+    // As soon as the app opens, request the permissions the screen-sharing
+    // service needs. Running on Android 14+ without
+    // FOREGROUND_SERVICE_MEDIA_PROJECTION granted first makes
+    // MainService.onCreate throw SecurityException and crash the app.
+    if (isAndroid) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (_startupPromptShown) return;
+          _startupPromptShown = true;
+          gFFI.serverModel.promptPermissions();
+        });
+      });
+    }
   }
 
   void initPages() {
