@@ -467,6 +467,15 @@ class _ConnectionPageState extends State<ConnectionPage> {
   }
 }
 
+/// Open the "My QR" dialog (LAN / Internet tabs) from anywhere in the app.
+void showMyQrDialog(BuildContext context) {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => _MyQrDialog(),
+  );
+}
+
 class _MyQrDialog extends StatefulWidget {
   @override
   State<_MyQrDialog> createState() => _MyQrDialogState();

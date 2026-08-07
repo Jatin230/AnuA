@@ -13,7 +13,9 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_hbb/common/widgets/peers_view.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/ab_model.dart';
+import 'package:flutter_hbb/models/activity_model.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
+import 'package:flutter_hbb/models/device_model.dart';
 import 'package:flutter_hbb/models/cm_file_model.dart';
 import 'package:flutter_hbb/models/file_model.dart';
 import 'package:flutter_hbb/models/group_model.dart';
@@ -3691,6 +3693,8 @@ class FFI {
   late final ServerModel serverModel; // global
   late final ChatModel chatModel; // session
   late final FileModel fileModel; // session
+  late final DeviceModel deviceModel; // global
+  late final ActivityModel activityModel; // global
   late final AbModel abModel; // global
   late final GroupModel groupModel; // global
   late final UserModel userModel; // global
@@ -3719,6 +3723,8 @@ class FFI {
     canvasModel = CanvasModel(WeakReference(this));
     serverModel = ServerModel(WeakReference(this));
     chatModel = ChatModel(WeakReference(this));
+    deviceModel = DeviceModel();
+    activityModel = ActivityModel();
     fileModel = FileModel(WeakReference(this));
     userModel = UserModel(WeakReference(this));
     peerTabModel = PeerTabModel(WeakReference(this));

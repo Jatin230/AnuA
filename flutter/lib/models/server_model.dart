@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
+import 'package:flutter_hbb/models/activity_model.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
@@ -440,6 +441,15 @@ class ServerModel with ChangeNotifier {
     }
   }
 
+  /// Start sharing without the "service will start" confirmation dialog.
+  /// Runtime permissions are requested first; the Android screen-capture
+  /// consent dialog is launched by the native side during startService().
+  Future<void> startServiceDirectly() async {
+    if (_isStart) return;
+    await promptPermissions();
+    await startService();
+  }
+
   /// Request the runtime permissions the screen-sharing service needs
   /// (notification, floating window, external storage). The mediaProjection
   /// consent is requested separately via the system screen-capture dialog, and
@@ -468,6 +478,12 @@ class ServerModel with ChangeNotifier {
     if (isAndroid) {
       androidUpdatekeepScreenOn();
     }
+    if (!isTest) {
+      gFFI.activityModel.add(ActivityEvent(
+        type: ActivityType.shareStart,
+        title: 'This Phone',
+        detail: 'Started sharing your screen'));
+    }
   }
 
   /// Stop the screen sharing service.
@@ -479,6 +495,12 @@ class ServerModel with ChangeNotifier {
     notifyListeners();
     // for androidUpdatekeepScreenOn only
     WakelockManager.disable(_wakelockKey);
+    if (!isTest) {
+      gFFI.activityModel.add(ActivityEvent(
+        type: ActivityType.shareStop,
+        title: 'This Phone',
+        detail: 'Stopped sharing your screen'));
+    }
   }
 
   Future<bool> setPermanentPassword(String newPW) async {
@@ -569,6 +591,14 @@ class ServerModel with ChangeNotifier {
         final index = _clients.indexWhere((c) => c.id == client.id);
         if (index < 0) {
           _clients.add(client);
+          // Activity: a device connected to us.
+          gFFI.activityModel.add(ActivityEvent(
+            type: ActivityType.connectIn,
+            title: client.name,
+            detail: '${client.name} shared their screen with you'));
+          gFFI.deviceModel.load().then((_) {
+            gFFI.deviceModel.touchLastConnected(client.peerId);
+          });
         } else {
           _clients[index].authorized = true;
         }

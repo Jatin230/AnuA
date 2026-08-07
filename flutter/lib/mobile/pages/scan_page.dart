@@ -20,7 +20,11 @@ class ScanPage extends StatefulWidget {
   /// navigating to RemotePage directly. Used by multi-device session mode.
   final void Function(String uri, String? password)? onNostrControlLaptop;
 
-  const ScanPage({super.key, this.onNostrControlLaptop});
+  /// When set, a direct LAN QR ("Control Device") fires this callback with the
+  /// parsed IP/port before connecting, so callers can offer to save the device.
+  final Future<void> Function(String ip, int port)? onConnectedDevice;
+
+  const ScanPage({super.key, this.onNostrControlLaptop, this.onConnectedDevice});
 
   @override
   State<ScanPage> createState() => _ScanPageState();
@@ -241,6 +245,10 @@ class _ScanPageState extends State<ScanPage> {
           if (action == 'control') {
             // Direct LAN control — the laptop shows its approval popup and the
             // session starts after it is accepted.
+            if (widget.onConnectedDevice != null) {
+              await widget.onConnectedDevice!(ip, port);
+            }
+            if (!mounted) return;
             connect(context, address);
             return;
           }

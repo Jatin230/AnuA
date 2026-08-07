@@ -12,6 +12,7 @@ import 'package:flutter_hbb/common/formatter/id_formatter.dart';
 import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/main.dart';
+import 'package:flutter_hbb/models/activity_model.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
@@ -2676,9 +2677,44 @@ connect(BuildContext context, String id,
     stateGlobal.isInMainPage = false;
   }
 
+  if (!isDesktop) {
+    await _recordDeviceHubActivity(id, isFileTransfer: isFileTransfer);
+  }
+
   FocusScopeNode currentFocus = FocusScope.of(context);
   if (!currentFocus.hasPrimaryFocus) {
     currentFocus.unfocus();
+  }
+}
+
+/// Extract the IP from a `direct-tcp:<ip>_port_<port>` target id, or null.
+String? lanIpFromDirectTcp(String id) {
+  if (!id.startsWith('direct-tcp:')) return null;
+  final m = RegExp(r'^direct-tcp:(.+)_port_(\d+)$').firstMatch(id);
+  return m?.group(1);
+}
+
+/// Record an outbound connect/file-transfer in the Device Hub activity log and
+/// refresh the matching device's "last connected" timestamp + LAN IP.
+Future<void> _recordDeviceHubActivity(String id,
+    {bool isFileTransfer = false}) async {
+  try {
+    await gFFI.deviceModel.load();
+    final device = gFFI.deviceModel.matchById(id);
+    final lanIp = lanIpFromDirectTcp(id);
+    final name = device?.name ?? lanIp ?? id;
+    await gFFI.activityModel.load();
+    gFFI.activityModel.add(ActivityEvent(
+      type:
+          isFileTransfer ? ActivityType.fileTransfer : ActivityType.connectOut,
+      title: name,
+      detail: isFileTransfer ? 'File transfer with $name' : 'Connected to $name',
+    ));
+    if (device != null) {
+      gFFI.deviceModel.touchLastConnected(device.remoteId, lanIp: lanIp);
+    }
+  } catch (e) {
+    debugPrint('_recordDeviceHubActivity failed: $e');
   }
 }
 

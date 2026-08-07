@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_hbb/common/widgets/chat_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
 import 'package:flutter_hbb/mobile/widgets/dialog.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
@@ -23,10 +24,7 @@ class ServerPage extends StatefulWidget implements PageShape {
   final icon = const Icon(Icons.mobile_screen_share);
 
   @override
-  final appBarActions = (!bind.isDisableSettings() &&
-          bind.mainGetBuildinOption(key: kOptionHideSecuritySetting) != 'Y')
-      ? [_DropDownAction()]
-      : [];
+  final appBarActions = <Widget>[];
 
   ServerPage({Key? key}) : super(key: key);
 
@@ -209,16 +207,125 @@ class _ServerPageState extends State<ServerPage> {
                       mainAxisAlignment: MainAxisAlignment.start,
                       children: [
                         buildPresetPasswordWarningMobile(),
-                        gFFI.serverModel.isStart
-                            ? ServerInfo()
-                            : ServiceNotRunningNotification(),
+                        _BigShareButton(serverModel),
+                        const _ShareStatusCard(),
+                        if (gFFI.serverModel.isStart) ServerInfo(),
                         const ConnectionManager(),
                         const PermissionChecker(),
+                        const _AdvancedSection(),
                         SizedBox.fromSize(size: const Size(0, 15.0)),
                       ],
                     ),
                   ),
                 )));
+  }
+}
+
+/// Huge start/stop toggle for the screen-sharing service.
+class _BigShareButton extends StatelessWidget {
+  final ServerModel serverModel;
+
+  const _BigShareButton(this.serverModel);
+
+  @override
+  Widget build(BuildContext context) {
+    final isStart = serverModel.isStart;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      child: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: () {
+            if (serverModel.isStart) {
+              serverModel.toggleService();
+            } else {
+              serverModel.startServiceDirectly();
+            }
+          },
+          icon: Icon(isStart ? Icons.stop : Icons.play_arrow, size: 32),
+          label: Text(
+            isStart ? translate('Stop Sharing') : translate('Start Sharing'),
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isStart ? Colors.redAccent : MyTheme.accent,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Connection/security settings relocated from the app bar, expandable.
+class _AdvancedSection extends StatefulWidget {
+  const _AdvancedSection();
+
+  @override
+  State<_AdvancedSection> createState() => _AdvancedSectionState();
+}
+
+class _AdvancedSectionState extends State<_AdvancedSection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final showDropdown = !bind.isDisableSettings() &&
+        bind.mainGetBuildinOption(key: kOptionHideSecuritySetting) != 'Y';
+    if (!showDropdown) return const SizedBox.shrink();
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+      margin: const EdgeInsets.fromLTRB(12.0, 10.0, 12.0, 0),
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(13),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      translate("Advanced"),
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.merge(const TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: const Icon(Icons.keyboard_arrow_down),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 15),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      translate("Connection & security"),
+                      style: const TextStyle(fontSize: 15),
+                    ),
+                  ),
+                  _DropDownAction(),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 
@@ -232,30 +339,47 @@ void checkService() async {
   }
 }
 
-class ServiceNotRunningNotification extends StatelessWidget {
-  ServiceNotRunningNotification({Key? key}) : super(key: key);
+/// Friendly sharing status card shown in both running and idle states.
+class _ShareStatusCard extends StatelessWidget {
+  const _ShareStatusCard({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     final serverModel = Provider.of<ServerModel>(context);
-
+    final isSharing = serverModel.isStart;
+    final Color dotColor = isSharing ? const Color(0xFF22C55E) : Colors.redAccent;
     return PaddingCard(
-        title: translate("Service is not running"),
+        title: translate('Status'),
         titleIcon:
-            const Icon(Icons.warning_amber_sharp, color: Colors.redAccent),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+            Icon(Icons.radio_button_checked, color: dotColor),
+        child: Row(
           children: [
-            Text(translate("android_start_service_tip"),
-                    style:
-                        const TextStyle(fontSize: 12, color: MyTheme.darkGray))
-                .marginOnly(bottom: 8),
-            ElevatedButton.icon(
-                icon: const Icon(Icons.play_arrow),
-                onPressed: () {
-                  serverModel.toggleService();
-                },
-                label: Text(translate("Start service")))
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isSharing ? 'Sharing' : 'Not Sharing',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isSharing
+                        ? 'Ready to receive connections.'
+                        : 'Waiting for incoming connections.',
+                    style: const TextStyle(
+                        fontSize: 13, color: MyTheme.darkGray),
+                  ),
+                ],
+              ),
+            ),
           ],
         ));
   }
@@ -579,59 +703,132 @@ class _PermissionCheckerState extends State<PermissionChecker> {
     return PaddingCard(
         title: translate("Permissions"),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          serverModel.mediaOk
-              ? ElevatedButton.icon(
-                      style: ButtonStyle(
-                          backgroundColor:
-                              MaterialStateProperty.all(Colors.red)),
-                      icon: const Icon(Icons.stop),
-                      onPressed: serverModel.toggleService,
-                      label: Text(translate("Stop service")))
-                  .marginOnly(bottom: 8)
-              : SizedBox.shrink(),
-          PermissionRow(
-              translate("Screen Capture"),
-              serverModel.mediaOk,
-              serverModel.toggleService),
-          PermissionRow(translate("Input Control"), serverModel.inputOk,
-              serverModel.toggleInput),
-          PermissionRow(translate("Transfer file"), serverModel.fileOk,
-              serverModel.toggleFile),
-          hasAudioPermission
-              ? PermissionRow(translate("Audio Capture"), serverModel.audioOk,
-                  serverModel.toggleAudio)
-              : Row(children: [
-                  Icon(Icons.info_outline).marginOnly(right: 15),
-                  Expanded(
-                      child: Text(
-                    translate("android_version_audio_tip"),
-                    style: const TextStyle(color: MyTheme.darkGray),
-                  ))
-                ]),
-          PermissionRow(translate("Enable clipboard"), serverModel.clipboardOk,
-              serverModel.toggleClipboard),
+          const _PermissionSectionHeader('Required'),
+          _PermissionRow(
+            icon: Icons.monitor,
+            name: 'Screen Capture',
+            enabled: serverModel.mediaOk,
+            required: true,
+            onTap: serverModel.mediaOk
+                ? serverModel.toggleService
+                : serverModel.startServiceDirectly,
+          ),
+          _PermissionRow(
+            icon: Icons.touch_app,
+            name: 'Input Control',
+            enabled: serverModel.inputOk,
+            required: true,
+            onTap: serverModel.toggleInput,
+          ),
+          const _PermissionSectionHeader('Optional'),
+          _PermissionRow(
+            icon: Icons.folder_open,
+            name: 'Transfer File',
+            enabled: serverModel.fileOk,
+            onTap: serverModel.toggleFile,
+          ),
+          if (hasAudioPermission)
+            _PermissionRow(
+              icon: Icons.mic,
+              name: 'Audio Capture',
+              enabled: serverModel.audioOk,
+              onTap: serverModel.toggleAudio,
+            )
+          else
+            Row(children: [
+              Icon(Icons.info_outline).marginOnly(right: 15),
+              Expanded(
+                  child: Text(
+                translate("android_version_audio_tip"),
+                style: const TextStyle(color: MyTheme.darkGray),
+              ))
+            ]),
+          _PermissionRow(
+            icon: Icons.content_paste,
+            name: 'Clipboard',
+            enabled: serverModel.clipboardOk,
+            onTap: serverModel.toggleClipboard,
+          ),
         ]));
   }
 }
 
-class PermissionRow extends StatelessWidget {
-  const PermissionRow(this.name, this.isOk, this.onPressed, {Key? key})
-      : super(key: key);
-
-  final String name;
-  final bool isOk;
-  final VoidCallback onPressed;
+class _PermissionSectionHeader extends StatelessWidget {
+  final String label;
+  const _PermissionSectionHeader(this.label);
 
   @override
   Widget build(BuildContext context) {
-    return SwitchListTile(
-        visualDensity: VisualDensity.compact,
-        contentPadding: EdgeInsets.all(0),
-        title: Text(name),
-        value: isOk,
-        onChanged: (bool value) {
-          onPressed();
-        });
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 4),
+      child: Text(
+        label.toUpperCase(),
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.8,
+          color: MyTheme.darkGray,
+        ),
+      ),
+    );
+  }
+}
+
+class _PermissionRow extends StatelessWidget {
+  const _PermissionRow({
+    required this.icon,
+    required this.name,
+    required this.enabled,
+    this.required = false,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String name;
+  final bool enabled;
+  final bool required;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final needsAttention = !enabled && required;
+    final Color tagColor =
+        needsAttention ? const Color(0xFFF59E0B) : (enabled ? const Color(0xFF16A34A) : MyTheme.darkGray);
+    final String tagText =
+        needsAttention ? 'Required' : (enabled ? 'Enabled' : 'Disabled');
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Icon(icon,
+                size: 22,
+                color: enabled ? MyTheme.accent : MyTheme.darkGray),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(name, style: const TextStyle(fontSize: 15)),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: tagColor.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                tagText,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: tagColor,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -662,11 +859,16 @@ class ConnectionManager extends StatelessWidget {
                                   onPressed: () {
                                     gFFI.chatModel.changeCurrentKey(
                                         MessageKey(client.peerId, client.id));
-                                    final bar = navigationBarKey.currentWidget;
-                                    if (bar != null) {
-                                      bar as BottomNavigationBar;
-                                      bar.onTap!(1);
-                                    }
+                                    Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                            builder: (_) => Scaffold(
+                                                  appBar: AppBar(
+                                                      title: const Text(
+                                                          'Chat')),
+                                                  body: ChatPage(
+                                                      type: ChatPageType
+                                                          .mobileMain),
+                                                )));
                                   },
                                   icon: unreadTopRightBuilder(
                                       client.unreadChatMessageCount)))

@@ -430,6 +430,11 @@ const kAndroid13Notification = "android.permission.POST_NOTIFICATIONS";
 const kForegroundServiceMediaProjection =
     "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION";
 
+/// Device Hub persistence keys (stored as JSON via local options).
+const kDeviceHubDevices = "_deviceHubDevices";
+const kDeviceHubActivity = "_deviceHubActivity";
+const kDeviceHubPinned = "_deviceHubPinned";
+
 /// Android channel invoke type key
 class AndroidChannel {
   static final kStartAction = "start_action";
