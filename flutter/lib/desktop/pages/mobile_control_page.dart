@@ -230,6 +230,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
   void _showDeviceActionDialog(Map<String, String> device) {
     final hasPassword = (device['temp_password'] ?? '').isNotEmpty;
+    final isNostr = device['ip']?.startsWith('nostr-webrtc://') ?? false;
     print('L2: _showDeviceActionDialog: ${device['name']} ${device['id']} hasPassword=$hasPassword');
     agentDebugLog('L2', 'mobile_control_page.dart:_showDeviceActionDialog',
         'action dialog shown', {
@@ -255,7 +256,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
           ElevatedButton(
             onPressed: () {
               Navigator.of(context, rootNavigator: true).pop();
-              Future.microtask(() => _connectDevice(device));
+              Future.microtask(() => _connectDeviceWithMode(device, 'control'));
             },
             child: const Text('Control Phone'),
           ),
@@ -1165,6 +1166,10 @@ class _MobileControlPageState extends State<MobileControlPage> {
   }
 
   Future<void> _connectDevice(Map<String, String> device) async {
+    await _connectDeviceWithMode(device, 'control');
+  }
+
+  Future<void> _connectDeviceWithMode(Map<String, String> device, String mode) async {
     final ip = device['ip'];
     if (ip == null || ip.isEmpty) {
       showToast('Device IP is missing.');
@@ -1176,10 +1181,11 @@ class _MobileControlPageState extends State<MobileControlPage> {
     setState(() => _sessionStatus[key] = 'Connecting');
 
     // #region agent log
-    print('L2: _connectDevice start: ip=$ip key=$key');
-    agentDebugLog('L2', 'mobile_control_page.dart:_connectDevice', 'connect start', {
+    print('L2: _connectDeviceWithMode start: ip=$ip key=$key mode=$mode');
+    agentDebugLog('L2', 'mobile_control_page.dart:_connectDeviceWithMode', 'connect start', {
       'ip': ip,
       'key': key,
+      'mode': mode,
       'hasTempPassword': (device['temp_password'] ?? '').isNotEmpty,
       'connectionId': 'direct-tcp:${ip}_port_21118',
     });
@@ -1199,7 +1205,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
       ffi.dialogManager.setOverlayState(_overlayKeyState);
       // #region agent log
       print('L3: _connectDevice overlay attached: ip=$ip overlayReady=${_overlayKeyState.state != null}');
-      agentDebugLog('L3', 'mobile_control_page.dart:_connectDevice', 'overlay attached', {
+      agentDebugLog('L3', 'mobile_control_page.dart:_connectDeviceWithMode', 'overlay attached', {
         'ip': ip,
         'overlayReady': _overlayKeyState.state != null,
       });
@@ -1230,11 +1236,13 @@ class _MobileControlPageState extends State<MobileControlPage> {
       // would break all other active sessions.
       // Use the phone's temporary password so the login is auto-authorized.
       final tempPwd = device['temp_password'] ?? '';
-      print('L4: _connectDevice ffi.start about to call: connectionId=$connectionId hasPassword=${tempPwd.isNotEmpty} sessionId=${ffi.sessionId}');
-      agentDebugLog('L4', 'mobile_control_page.dart:_connectDevice', 'ffi.start about to call', {
+      final bool isViewMode = mode == 'view';
+      print('L4: _connectDeviceWithMode ffi.start about to call: connectionId=$connectionId hasPassword=${tempPwd.isNotEmpty} isViewMode=$isViewMode sessionId=${ffi.sessionId}');
+      agentDebugLog('L4', 'mobile_control_page.dart:_connectDeviceWithMode', 'ffi.start about to call', {
         'connectionId': connectionId,
         'hasPassword': tempPwd.isNotEmpty,
-        'nostrMode': connectionId.startsWith('nostr-webrtc://') ? 'control' : null,
+        'isViewMode': isViewMode,
+        'nostrMode': connectionId.startsWith('nostr-webrtc://') ? mode : null,
         'sessionId': ffi.sessionId.toString(),
         'key': key,
         'ts': DateTime.now().millisecondsSinceEpoch,
@@ -1244,16 +1252,18 @@ class _MobileControlPageState extends State<MobileControlPage> {
           connectionId,
           password: tempPwd,
           isSharedPassword: false,
-          nostrMode: connectionId.startsWith('nostr-webrtc://') ? 'control' : null,
+          isViewCamera: isViewMode,
+          nostrMode: connectionId.startsWith('nostr-webrtc://') ? mode : null,
         );
       } else {
         ffi.start(
           connectionId,
-          nostrMode: connectionId.startsWith('nostr-webrtc://') ? 'control' : null,
+          isViewCamera: isViewMode,
+          nostrMode: connectionId.startsWith('nostr-webrtc://') ? mode : null,
         );
       }
-      print('L4: _connectDevice ffi.start returned: connectionId=$connectionId sessionId=${ffi.sessionId}');
-      agentDebugLog('L4', 'mobile_control_page.dart:_connectDevice', 'ffi.start returned', {
+      print('L4: _connectDeviceWithMode ffi.start returned: connectionId=$connectionId sessionId=${ffi.sessionId}');
+      agentDebugLog('L4', 'mobile_control_page.dart:_connectDeviceWithMode', 'ffi.start returned', {
         'connectionId': connectionId,
         'sessionId': ffi.sessionId.toString(),
         'ts': DateTime.now().millisecondsSinceEpoch,
@@ -1264,8 +1274,8 @@ class _MobileControlPageState extends State<MobileControlPage> {
       });
       _startKeepAwake();
       showToast(ip.startsWith('nostr-webrtc://')
-          ? 'Connecting...'
-          : 'Connecting to $ip...');
+          ? 'Connecting... ($mode)'
+          : 'Connecting to $ip... ($mode)');
 
       // Timeout: if no first image within 30s, report the pi state to help diagnose.
       _imageTimeout?.cancel();

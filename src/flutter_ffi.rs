@@ -3054,6 +3054,11 @@ pub fn main_get_common(key: String) -> String {
         return true.to_string();
         #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         return false.to_string();
+    } else if key == "is-firewall-rule-added" {
+        #[cfg(target_os = "windows")]
+        return crate::platform::windows::is_firewall_rule_added().to_string();
+        #[cfg(not(target_os = "windows"))]
+        return true.to_string();
     } else if key == "transfer-job-id" {
         return hbb_common::fs::get_next_job_id().to_string();
     } else if key == "is-remote-modify-enabled-by-control-permissions" {
@@ -3256,6 +3261,42 @@ pub fn main_set_common(_key: String, _value: String) {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    if _key == "firewall-allow" {
+        std::thread::spawn(move || {
+            let (success, msg) =
+                match crate::platform::windows::elevate("--firewall-allow") {
+                    // ShellExecuteW returned > 32: the elevated helper was launched.
+                    Ok(true) => {
+                        if crate::platform::windows::wait_for_firewall_rule(30) {
+                            (true, "".to_owned())
+                        } else {
+                            log::error!("Timed out waiting for the firewall rule to be added");
+                            (false, "timeout".to_owned())
+                        }
+                    }
+                    // <= 32: launch failed, e.g. the user dismissed the UAC prompt.
+                    Ok(false) => {
+                        log::error!("Failed to launch elevated helper (elevation cancelled?)");
+                        (false, "cancelled".to_owned())
+                    }
+                    Err(e) => {
+                        let err = e.to_string();
+                        log::error!("Failed to elevate for firewall rule: {}", &err);
+                        (false, err)
+                    }
+                };
+            let data = HashMap::from([
+                ("name", serde_json::json!("firewall-allow-res")),
+                ("success", serde_json::json!(success)),
+                ("msg", serde_json::json!(msg)),
+            ]);
+            let _res = flutter::push_global_event(
+                flutter::APP_TYPE_MAIN,
+                serde_json::ser::to_string(&data).unwrap_or("".to_owned()),
+            );
+        });
+    }
     if _key == "remove-downloader" {
         crate::hbbs_http::downloader::remove(&_value);
     } else if _key == "cancel-downloader" {

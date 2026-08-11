@@ -529,6 +529,12 @@ class ServerModel with ChangeNotifier {
         _mediaOk = value;
         if (value && !_isStart) {
           startService();
+        } else if (value && _isStart) {
+          // The projection was (re)granted while sharing is considered on
+          // (e.g. after a laptop reconnect re-requested the consent dialog).
+          // Rust stops capture when the last client disconnects, so explicitly
+          // restart it now that the projection is available again.
+          ensureCapture();
         }
         break;
       case "input":
@@ -543,6 +549,22 @@ class ServerModel with ChangeNotifier {
         return;
     }
     notifyListeners();
+  }
+
+  /// Ensure screen capture is running for authorized clients. No-op when
+  /// capture is already running. If capture cannot start (e.g. Android revoked
+  /// the projection), we deliberately do NOT re-request the consent dialog:
+  /// while the service is considered ON, a connection must never pop the
+  /// screen-sharing permission prompt. The user re-enables sharing manually to
+  /// re-grant consent.
+  Future<void> ensureCapture() async {
+    if (isTest) return;
+    final ffi = parent.target;
+    if (ffi == null) return;
+    final ok = await ffi.invokeMethod("start_capture");
+    if (!ok && _isStart) {
+      debugPrint('start_capture failed, keeping service state, no re-prompt');
+    }
   }
 
   // force
@@ -601,6 +623,14 @@ class ServerModel with ChangeNotifier {
           });
         } else {
           _clients[index].authorized = true;
+        }
+        // Restart screen capture for a reconnecting (already authorized) client.
+        // On Android, Rust stops capture when the last client disconnects
+        // (stop_capture), but Flutter still thinks sharing is on (_isStart stays
+        // true), so nothing else re-triggers capture. startCapture() is a no-op
+        // when capture is already running, so this is safe on first connect too.
+        if (!client.isFileTransfer && !client.isTerminal) {
+          ensureCapture();
         }
       } else {
         if (_clients.any((c) => c.id == client.id)) {
@@ -738,7 +768,7 @@ class ServerModel with ChangeNotifier {
     if (res) {
       bind.cmLoginRes(connId: client.id, res: res);
       if (!client.isFileTransfer && !client.isTerminal) {
-        parent.target?.invokeMethod("start_capture");
+        ensureCapture();
       }
       parent.target?.invokeMethod("cancel_notification", client.id);
       client.authorized = true;

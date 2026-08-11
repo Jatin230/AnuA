@@ -62,7 +62,18 @@ class AudioRecordHandle(private var context: Context, private var isVideoStart: 
                 return false
             }
         }
-        audioRecorder = builder.build()
+        audioRecorder = try {
+            builder.build()
+        } catch (e: Exception) {
+            // e.g. UnsupportedOperationException: "Error: could not register audio
+            // policy" when the MediaProjection token is no longer usable. Never crash
+            // the service because audio capture failed.
+            Log.e(logTag, "createAudioRecorder failed to build AudioRecord: ${e.message}")
+            null
+        }
+        if (audioRecorder == null) {
+            return false
+        }
         Log.d(logTag, "createAudioRecorder done,minBufferSize:$minBufferSize")
         return true
     }

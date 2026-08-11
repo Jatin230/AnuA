@@ -12,6 +12,7 @@ class Peer {
   String username; // pc username
   String hostname;
   String platform;
+  String ip;
   String alias;
   List<dynamic> tags;
   bool forceAlwaysRelay = false;
@@ -37,6 +38,7 @@ class Peer {
         username = json['username'] ?? '',
         hostname = json['hostname'] ?? '',
         platform = json['platform'] ?? '',
+        ip = json['ip'] ?? '',
         alias = json['alias'] ?? '',
         tags = json['tags'] ?? [],
         forceAlwaysRelay = json['forceAlwaysRelay'] == 'true',
@@ -55,6 +57,7 @@ class Peer {
       "username": username,
       "hostname": hostname,
       "platform": platform,
+      "ip": ip,
       "alias": alias,
       "tags": tags,
       "forceAlwaysRelay": forceAlwaysRelay.toString(),
@@ -109,6 +112,7 @@ class Peer {
     required this.device_group_name,
     required this.note,
     this.sameServer,
+    this.ip = '',
   });
 
   Peer.loading()

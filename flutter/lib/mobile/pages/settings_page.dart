@@ -1,24 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
-import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:settings_ui/settings_ui.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../common.dart';
 import '../../common/widgets/dialog.dart';
-import '../../common/widgets/login.dart';
 import '../../consts.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
-import '../widgets/dialog.dart';
 import 'home_page.dart';
 import 'scan_page.dart';
 
@@ -70,9 +64,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   final _hasIgnoreBattery =
       false; //androidVersion >= 26; // remove because not work on every device
   var _ignoreBatteryOpt = false;
-  var _enableStartOnBoot = false;
-  var _checkUpdateOnStartup = false;
-  var _showTerminalExtraKeys = false;
   var _floatingWindowDisabled = false;
   var _keepScreenOn = KeepScreenOn.duringControlled; // relay on floating window
   var _enableAbr = false;
@@ -81,7 +72,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _enableDirectIPAccess = false;
   var _enableRecordSession = false;
   var _enableHardwareCodec = false;
-  var _allowWebSocket = false;
   var _autoRecordIncomingSession = false;
   var _autoRecordOutgoingSession = false;
   var _allowAutoDisconnect = false;
@@ -90,17 +80,11 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _fingerprint = "";
   var _buildDate = "";
   var _autoDisconnectTimeout = "";
-  var _hideServer = false;
-  var _hideProxy = false;
-  var _hideNetwork = false;
-  var _hideWebSocket = false;
-  var _enableTrustedDevices = false;
   var _enableUdpPunch = false;
   var _allowInsecureTlsFallback = false;
   var _disableUdp = false;
   var _enableIpv6Punch = false;
   var _isUsingPublicServer = false;
-  var _allowAskForNoteAtEndOfConnection = false;
   var _preventSleepWhileConnected = true;
 
   _SettingsState() {
@@ -115,7 +99,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         bind.mainGetOptionSync(key: kOptionEnableRecordSession));
     _enableHardwareCodec = option2bool(kOptionEnableHwcodec,
         bind.mainGetOptionSync(key: kOptionEnableHwcodec));
-    _allowWebSocket = mainGetBoolOptionSync(kOptionAllowWebSocket);
     _allowInsecureTlsFallback =
         mainGetBoolOptionSync(kOptionAllowInsecureTLSFallback);
     _disableUdp = bind.mainGetOptionSync(key: kOptionDisableUdp) == 'Y';
@@ -129,23 +112,10 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         bind.mainGetOptionSync(key: kOptionAllowAutoDisconnect));
     _autoDisconnectTimeout =
         bind.mainGetOptionSync(key: kOptionAutoDisconnectTimeout);
-    _hideServer =
-        bind.mainGetBuildinOption(key: kOptionHideServerSetting) == 'Y';
-    _hideProxy = bind.mainGetBuildinOption(key: kOptionHideProxySetting) == 'Y';
-    _hideNetwork =
-        bind.mainGetBuildinOption(key: kOptionHideNetworkSetting) == 'Y';
-    _hideWebSocket =
-        bind.mainGetBuildinOption(key: kOptionHideWebSocketSetting) == 'Y' ||
-            isWeb;
-    _enableTrustedDevices = mainGetBoolOptionSync(kOptionEnableTrustedDevices);
     _enableUdpPunch = mainGetLocalBoolOptionSync(kOptionEnableUdpPunch);
     _enableIpv6Punch = mainGetLocalBoolOptionSync(kOptionEnableIpv6Punch);
-    _allowAskForNoteAtEndOfConnection =
-        mainGetLocalBoolOptionSync(kOptionAllowAskForNoteAtEndOfConnection);
     _preventSleepWhileConnected =
         mainGetLocalBoolOptionSync(kOptionKeepAwakeDuringOutgoingSessions);
-    _showTerminalExtraKeys =
-        mainGetLocalBoolOptionSync(kOptionEnableShowTerminalExtraKeys);
   }
 
   @override
@@ -160,32 +130,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         if (await checkAndUpdateIgnoreBatteryStatus()) {
           update = true;
         }
-      }
-
-      if (await checkAndUpdateStartOnBoot()) {
-        update = true;
-      }
-
-      // start on boot depends on ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS and SYSTEM_ALERT_WINDOW
-      var enableStartOnBoot =
-          await gFFI.invokeMethod(AndroidChannel.kGetStartOnBootOpt);
-      if (enableStartOnBoot) {
-        if (!await canStartOnBoot()) {
-          enableStartOnBoot = false;
-          gFFI.invokeMethod(AndroidChannel.kSetStartOnBootOpt, false);
-        }
-      }
-
-      if (enableStartOnBoot != _enableStartOnBoot) {
-        update = true;
-        _enableStartOnBoot = enableStartOnBoot;
-      }
-
-      var checkUpdateOnStartup =
-          mainGetLocalBoolOptionSync(kOptionEnableCheckUpdate);
-      if (checkUpdateOnStartup != _checkUpdateOnStartup) {
-        update = true;
-        _checkUpdateOnStartup = checkUpdateOnStartup;
       }
 
       var floatingWindowDisabled =
@@ -257,8 +201,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       () async {
         final ibs = await checkAndUpdateIgnoreBatteryStatus();
-        final sob = await checkAndUpdateStartOnBoot();
-        if (ibs || sob) {
+        if (ibs) {
           setState(() {});
         }
       }();
@@ -270,18 +213,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         kRequestIgnoreBatteryOptimizations);
     if (_ignoreBatteryOpt != res) {
       _ignoreBatteryOpt = res;
-      return true;
-    } else {
-      return false;
-    }
-  }
-
-  Future<bool> checkAndUpdateStartOnBoot() async {
-    if (!await canStartOnBoot() && _enableStartOnBoot) {
-      _enableStartOnBoot = false;
-      debugPrint(
-          "checkAndUpdateStartOnBoot and set _enableStartOnBoot -> false");
-      gFFI.invokeMethod(AndroidChannel.kSetStartOnBootOpt, false);
       return true;
     } else {
       return false;
@@ -308,75 +239,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
       ],
     ));
     final List<AbstractSettingsTile> enhancementsTiles = [];
-    final enable2fa = bind.mainHasValid2FaSync();
-    final List<AbstractSettingsTile> tfaTiles = [
-      SettingsTile.switchTile(
-        title: Text(translate('enable-2fa-title')),
-        initialValue: enable2fa,
-        onToggle: (v) async {
-          update() async {
-            setState(() {});
-          }
-
-          if (v == false) {
-            CommonConfirmDialog(
-                gFFI.dialogManager, translate('cancel-2fa-confirm-tip'), () {
-              change2fa(callback: update);
-            });
-          } else {
-            change2fa(callback: update);
-          }
-        },
-      ),
-      if (enable2fa)
-        SettingsTile.switchTile(
-          title: Text(translate('Telegram bot')),
-          initialValue: bind.mainHasValidBotSync(),
-          onToggle: (v) async {
-            update() async {
-              setState(() {});
-            }
-
-            if (v == false) {
-              CommonConfirmDialog(
-                  gFFI.dialogManager, translate('cancel-bot-confirm-tip'), () {
-                changeBot(callback: update);
-              });
-            } else {
-              changeBot(callback: update);
-            }
-          },
-        ),
-      if (enable2fa)
-        SettingsTile.switchTile(
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(translate('Enable trusted devices')),
-              Text('* ${translate('enable-trusted-devices-tip')}',
-                  style: Theme.of(context).textTheme.bodySmall),
-            ],
-          ),
-          initialValue: _enableTrustedDevices,
-          onToggle: isOptionFixed(kOptionEnableTrustedDevices)
-              ? null
-              : (v) async {
-                  mainSetBoolOption(kOptionEnableTrustedDevices, v);
-                  setState(() {
-                    _enableTrustedDevices = v;
-                  });
-                },
-        ),
-      if (enable2fa && _enableTrustedDevices)
-        SettingsTile(
-            title: Text(translate('Manage trusted devices')),
-            trailing: Icon(Icons.arrow_forward_ios),
-            onPressed: (context) {
-              Navigator.push(context, MaterialPageRoute(builder: (context) {
-                return _ManageTrustedDevices();
-              }));
-            })
-    ];
     final List<AbstractSettingsTile> shareScreenTiles = [
       SettingsTile.switchTile(
         title: Text(translate('Deny LAN discovery')),
@@ -577,72 +439,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 }
               }));
     }
-    enhancementsTiles.add(SettingsTile.switchTile(
-        initialValue: _enableStartOnBoot,
-        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(translate('Start on boot')),
-          Text(
-              '* ${translate('Start the screen sharing service on boot, requires special permissions')}',
-              style: Theme.of(context).textTheme.bodySmall),
-        ]),
-        onToggle: (toValue) async {
-          if (toValue) {
-            // 1. request kIgnoreBatteryOptimizations
-            if (!await AndroidPermissionManager.check(
-                kRequestIgnoreBatteryOptimizations)) {
-              if (!await AndroidPermissionManager.request(
-                  kRequestIgnoreBatteryOptimizations)) {
-                return;
-              }
-            }
-
-            // 2. request kSystemAlertWindow
-            if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
-              if (!await AndroidPermissionManager.request(kSystemAlertWindow)) {
-                return;
-              }
-            }
-
-            // (Optional) 3. request input permission
-          }
-          setState(() => _enableStartOnBoot = toValue);
-
-          gFFI.invokeMethod(AndroidChannel.kSetStartOnBootOpt, toValue);
-        }));
-
-    if (!bind.isCustomClient()) {
-      enhancementsTiles.add(
-        SettingsTile.switchTile(
-          initialValue: _checkUpdateOnStartup,
-          title:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(translate('Check for software update on startup')),
-          ]),
-          onToggle: (bool toValue) async {
-            await mainSetLocalBoolOption(kOptionEnableCheckUpdate, toValue);
-            setState(() => _checkUpdateOnStartup = toValue);
-          },
-        ),
-      );
-    }
-
-    enhancementsTiles.add(
-      SettingsTile.switchTile(
-        initialValue: _showTerminalExtraKeys,
-        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(translate('Show terminal extra keys')),
-        ]),
-        onToggle: (bool v) async {
-          await mainSetLocalBoolOption(kOptionEnableShowTerminalExtraKeys, v);
-          final newValue =
-              mainGetLocalBoolOptionSync(kOptionEnableShowTerminalExtraKeys);
-          setState(() {
-            _showTerminalExtraKeys = newValue;
-          });
-        },
-      ),
-    );
-
     onFloatingWindowChanged(bool toValue) async {
       if (toValue) {
         if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
@@ -699,68 +495,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     final settings = SettingsList(
       sections: [
         customClientSection,
-        if (!bind.isDisableAccount())
-          SettingsSection(
-            title: Text(translate('Account')),
-            tiles: [
-              SettingsTile(
-                title: Obx(() => Text(gFFI.userModel.userName.value.isEmpty
-                    ? translate('Login')
-                    : '${translate('Logout')} (${gFFI.userModel.accountLabelWithHandle})')),
-                leading: Obx(() {
-                  final avatar = bind.mainResolveAvatarUrl(
-                      avatar: gFFI.userModel.avatar.value);
-                  return buildAvatarWidget(
-                        avatar: avatar,
-                        size: 28,
-                        borderRadius: null,
-                        fallback: Icon(Icons.person),
-                      ) ??
-                      Icon(Icons.person);
-                }),
-                onPressed: (context) {
-                  if (gFFI.userModel.userName.value.isEmpty) {
-                    loginDialog();
-                  } else {
-                    logOutConfirmDialog();
-                  }
-                },
-              ),
-            ],
-          ),
         SettingsSection(title: Text(translate("Settings")), tiles: [
-          if (!_hideServer)
-            SettingsTile(
-                title: Text(translate('ID/Relay Server')),
-                leading: Icon(Icons.cloud),
-                onPressed: (context) {
-                  showServerSettings(gFFI.dialogManager, (callback) async {
-                    _isUsingPublicServer = await bind.mainIsUsingPublicServer();
-                    setState(callback);
-                  });
-                }),
-          if (!_hideNetwork && !_hideProxy)
-            SettingsTile(
-                title: Text(translate('Socks5/Http(s) Proxy')),
-                leading: Icon(Icons.network_ping),
-                onPressed: (context) {
-                  changeSocks5Proxy();
-                }),
-          if (!disabledSettings && !_hideNetwork && !_hideWebSocket)
-            SettingsTile.switchTile(
-              title: Text(translate('Use WebSocket')),
-              initialValue: _allowWebSocket,
-              onToggle: isOptionFixed(kOptionAllowWebSocket)
-                  ? null
-                  : (v) async {
-                      await mainSetBoolOption(kOptionAllowWebSocket, v);
-                      final newValue =
-                          await mainGetBoolOption(kOptionAllowWebSocket);
-                      setState(() {
-                        _allowWebSocket = newValue;
-                      });
-                    },
-            ),
           if (!_isUsingPublicServer)
             SettingsTile.switchTile(
               title: Text(translate('Allow insecure TLS fallback')),
@@ -837,24 +572,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               showThemeSettings(gFFI.dialogManager);
             },
           ),
-          if (!bind.isDisableAccount())
-            SettingsTile.switchTile(
-              title: Text(translate('note-at-conn-end-tip')),
-              initialValue: _allowAskForNoteAtEndOfConnection,
-              onToggle: (v) async {
-                if (v && !gFFI.userModel.isLogin) {
-                  final res = await loginDialog();
-                  if (res != true) return;
-                }
-                await mainSetLocalBoolOption(
-                    kOptionAllowAskForNoteAtEndOfConnection, v);
-                final newValue = mainGetLocalBoolOptionSync(
-                    kOptionAllowAskForNoteAtEndOfConnection);
-                setState(() {
-                  _allowAskForNoteAtEndOfConnection = newValue;
-                });
-              },
-            ),
           if (!incomingOnly)
             SettingsTile.switchTile(
               title:
@@ -942,11 +659,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             !disabledSettings &&
             !outgoingOnly &&
             !hideSecuritySettings)
-          SettingsSection(title: Text('2FA'), tiles: tfaTiles),
-        if (isAndroid &&
-            !disabledSettings &&
-            !outgoingOnly &&
-            !hideSecuritySettings)
           SettingsSection(
             title: Text(translate("Share screen")),
             tiles: shareScreenTiles,
@@ -964,17 +676,6 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
       ],
     );
     return settings;
-  }
-
-  Future<bool> canStartOnBoot() async {
-    // start on boot depends on ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS and SYSTEM_ALERT_WINDOW
-    if (_hasIgnoreBattery && !_ignoreBatteryOpt) {
-      return false;
-    }
-    if (!await AndroidPermissionManager.check(kSystemAlertWindow)) {
-      return false;
-    }
-    return true;
   }
 
   defaultDisplaySection() {
@@ -1188,51 +889,6 @@ class __DisplayPageState extends State<_DisplayPage> {
                   key: key, value: b ? 'Y' : defaultOptionNo);
               setState(() {});
             },
-    );
-  }
-}
-
-class _ManageTrustedDevices extends StatefulWidget {
-  const _ManageTrustedDevices();
-
-  @override
-  State<_ManageTrustedDevices> createState() => __ManageTrustedDevicesState();
-}
-
-class __ManageTrustedDevicesState extends State<_ManageTrustedDevices> {
-  RxList<TrustedDevice> trustedDevices = RxList.empty(growable: true);
-  RxList<Uint8List> selectedDevices = RxList.empty();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(translate('Manage trusted devices')),
-        centerTitle: true,
-        actions: [
-          Obx(() => IconButton(
-              icon: Icon(Icons.delete, color: Colors.white),
-              onPressed: selectedDevices.isEmpty
-                  ? null
-                  : () {
-                      confrimDeleteTrustedDevicesDialog(
-                          trustedDevices, selectedDevices);
-                    }))
-        ],
-      ),
-      body: FutureBuilder(
-          future: TrustedDevice.get(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return Center(child: CircularProgressIndicator());
-            }
-            if (snapshot.hasError) {
-              return Center(child: Text('Error: ${snapshot.error}'));
-            }
-            final devices = snapshot.data as List<TrustedDevice>;
-            trustedDevices = devices.obs;
-            return trustedDevicesTable(trustedDevices, selectedDevices);
-          }),
     );
   }
 }

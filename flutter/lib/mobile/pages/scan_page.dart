@@ -227,11 +227,20 @@ class _ScanPageState extends State<ScanPage> {
                   'This is a device on your local network.\n\n'
                   '• Control Device — use this phone to remotely control the '
                   'device (direct LAN connection).\n\n'
-                  '• Register Phone — let the device control this phone.'),
+                  '• Let Device Control Me — ask the target device to control this phone over LAN.\n\n'
+                  '• Register Phone — send registration info to the device.'),
               actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, 'cancel'),
+                  child: const Text('Cancel'),
+                ),
                 TextButton(
                   onPressed: () => Navigator.pop(ctx, 'register'),
                   child: const Text('Register Phone'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, 'control_phone_lan'),
+                  child: const Text('Let Device Control Me'),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
@@ -243,13 +252,17 @@ class _ScanPageState extends State<ScanPage> {
           );
           if (!mounted) return;
           if (action == 'control') {
-            // Direct LAN control — the laptop shows its approval popup and the
+            // Direct LAN control — the laptop/phone shows its approval popup and the
             // session starts after it is accepted.
             if (widget.onConnectedDevice != null) {
               await widget.onConnectedDevice!(ip, port);
             }
             if (!mounted) return;
             connect(context, address);
+            return;
+          }
+          if (action == 'control_phone_lan') {
+            await _sendLanControlRequest(context, ip, port);
             return;
           }
           if (action == 'register') {
@@ -638,6 +651,74 @@ class _ScanPageState extends State<ScanPage> {
       }
     } catch (e) {
       showToast('Failed to connect: $e');
+      controller?.resumeCamera();
+    }
+  }
+
+  /// Opens a direct TCP connection over LAN to the target device, sends `ANUVADINI_CONTROL`,
+  /// requesting the target device to connect back and control this phone over LAN.
+  Future<void> _sendLanControlRequest(
+      BuildContext ctx, String ip, int port) async {
+    showToast('Sending LAN control request to $ip:$port...');
+    try {
+      // Ensure phone screen sharing service is running
+      try {
+        await gFFI.serverModel.startService();
+      } catch (e) {
+        showToast('Failed to start phone screen sharing: $e');
+        controller?.resumeCamera();
+        return;
+      }
+
+      final socket =
+          await Socket.connect(ip, port, timeout: const Duration(seconds: 6));
+
+      // Build device identity: myIp
+      final interfaces = await NetworkInterface.list(
+          type: InternetAddressType.IPv4, includeLoopback: false);
+      String myIp = ip;
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback) {
+            myIp = addr.address;
+            break;
+          }
+        }
+        break;
+      }
+
+      String tempPassword = '';
+      try {
+        tempPassword = await bind.mainGetTemporaryPassword();
+      } catch (_) {}
+      if (tempPassword.isEmpty) {
+        try {
+          tempPassword = await bind.mainGetPermanentPassword();
+        } catch (_) {}
+      }
+
+      // Send control request message — format: ANUVADINI_CONTROL:<myIp>:<tempPwd>
+      socket.write('ANUVADINI_CONTROL:$myIp:$tempPassword\n');
+      await socket.flush();
+
+      // Wait for acknowledgment (up to 4 s)
+      String response = '';
+      try {
+        await for (final chunk in socket.timeout(const Duration(seconds: 4))) {
+          response += String.fromCharCodes(chunk);
+          if (response.contains('ANUVADINI_ACK')) break;
+        }
+      } catch (_) {}
+
+      await socket.close();
+
+      if (response.contains('ANUVADINI_ACK')) {
+        showToast('Control request sent to target device over LAN!');
+      } else {
+        showToast('Control request sent over LAN (no ACK)');
+      }
+    } catch (e) {
+      showToast('Failed to send LAN control request: $e');
       controller?.resumeCamera();
     }
   }

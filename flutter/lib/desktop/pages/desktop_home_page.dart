@@ -940,7 +940,53 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         _updateWindowSize();
       });
     }
+    if (isWindows) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _maybeShowFirewallDialog();
+      });
+    }
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  bool _firewallDialogShown = false;
+
+  void _maybeShowFirewallDialog() {
+    if (_firewallDialogShown) {
+      return;
+    }
+    if (bind.mainGetCommonSync(key: 'is-firewall-rule-added') == 'true') {
+      return;
+    }
+    _firewallDialogShown = true;
+    gFFI.dialogManager.show((setState, close, context) {
+      submit() {
+        close();
+        _runFirewallSetup();
+      }
+
+      return CustomAlertDialog(
+        title: Text(translate('allow-incoming-connections-title')),
+        content: Text(translate('allow-incoming-connections-content')),
+        actions: [
+          dialogButton(translate('Cancel'), onPressed: close, isOutline: true),
+          dialogButton(
+              translate('allow-incoming-connections-btn'), onPressed: submit),
+        ],
+        onSubmit: submit,
+        onCancel: close,
+      );
+    });
+  }
+
+  void _runFirewallSetup() {
+    platformFFI.registerEventHandler(
+        'firewall-allow-res', 'firewall-allow-res', (evt) async {
+      final success = evt['success'] as bool;
+      showToast(success
+          ? translate('firewall-ready-tip')
+          : translate('firewall-failed-tip'));
+    }, replace: true);
+    bind.mainSetCommon(key: 'firewall-allow', value: '');
   }
 
   _updateWindowSize() {

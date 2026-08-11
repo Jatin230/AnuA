@@ -138,7 +138,9 @@ class MainActivity : FlutterActivity() {
                         }
                         bindService(it, serviceConnection, Context.BIND_AUTO_CREATE)
                     }
-                    if (MainService.isReady) {
+                    // While the service is ON and already holds a projection, never
+                    // re-request the consent dialog (screen sharing stays ON).
+                    if (MainService.isReady || MainService.hasProjection) {
                         result.success(false)
                         return@setMethodCallHandler
                     }
@@ -234,21 +236,6 @@ class MainActivity : FlutterActivity() {
                 "try_sync_clipboard" -> {
                     rdClipboardManager?.syncClipboard(true)
                     result.success(true)
-                }
-                GET_START_ON_BOOT_OPT -> {
-                    val prefs = getSharedPreferences(KEY_SHARED_PREFERENCES, MODE_PRIVATE)
-                    result.success(prefs.getBoolean(KEY_START_ON_BOOT_OPT, false))
-                }
-                SET_START_ON_BOOT_OPT -> {
-                    if (call.arguments is Boolean) {
-                        val prefs = getSharedPreferences(KEY_SHARED_PREFERENCES, MODE_PRIVATE)
-                        val edit = prefs.edit()
-                        edit.putBoolean(KEY_START_ON_BOOT_OPT, call.arguments as Boolean)
-                        edit.apply()
-                        result.success(true)
-                    } else {
-                        result.success(false)
-                    }
                 }
                 SYNC_APP_DIR_CONFIG_PATH -> {
                     if (call.arguments is String) {

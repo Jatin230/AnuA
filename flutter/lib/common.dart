@@ -3032,6 +3032,9 @@ String getWindowName({WindowType? overrideType}) {
 }
 
 String getWindowNameWithId(String id, {WindowType? overrideType}) {
+  if (id.startsWith('nostr-webrtc://')) {
+    return getDesktopTabLabel(id, '');
+  }
   return "${DesktopTab.tablabelGetter(id).value} - ${getWindowName(overrideType: overrideType)}";
 }
 
@@ -3281,6 +3284,11 @@ Widget buildErrorBanner(BuildContext context,
 }
 
 String getDesktopTabLabel(String peerId, String alias) {
+  if (peerId.startsWith('nostr-webrtc://')) {
+    final uri = Uri.tryParse(peerId);
+    final deviceId = (uri != null && uri.host.isNotEmpty) ? uri.host : '';
+    return deviceId.isEmpty ? 'Remote' : 'Remote - $deviceId';
+  }
   String label = alias.isEmpty ? peerId : alias;
   try {
     String peer = bind.mainGetPeerSync(id: peerId);

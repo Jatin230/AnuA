@@ -15,7 +15,7 @@ typedef char** (*FUNC_ANUVADINI_CORE_MAIN)(int*);
 typedef void (*FUNC_ANUVADINI_FREE_ARGS)( char**, int);
 typedef int (*FUNC_ANUVADINI_GET_APP_NAME)(wchar_t*, int);
 /// Note: `--server`, `--service` are already handled in [core_main.rs].
-const std::vector<std::string> parameters_white_list = {"--install", "--cm"};
+const std::vector<std::string> parameters_white_list = {"--install", "--cm", "--firewall-allow"};
 
 const wchar_t* getWindowClassName();
 

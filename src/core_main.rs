@@ -289,6 +289,12 @@ pub fn core_main() -> Option<Vec<String>> {
                     crate::virtual_display_manager::amyuni_idd::uninstall_driver()
                 );
                 return None;
+            } else if args[0] == "--firewall-allow" {
+                match crate::platform::windows::add_firewall_rule() {
+                    Ok(_) => log::info!("Firewall rule added successfully"),
+                    Err(e) => log::error!("Failed to add firewall rule: {}", e),
+                }
+                return None;
             } else if args[0] == "--install-remote-printer" {
                 #[cfg(windows)]
                 if crate::platform::is_win_10_or_greater() {

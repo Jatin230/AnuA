@@ -292,21 +292,13 @@ impl<T: InvokeUiCM> ConnectionManager<T> {
             crate::clipboard::try_empty_clipboard_files(ClipboardSide::Host, id);
         }
 
-        #[cfg(any(target_os = "android"))]
-        if CLIENTS
-            .read()
-            .unwrap()
-            .iter()
-            .filter(|(_k, v)| !v.is_file_transfer && !v.is_terminal)
-            .next()
-            .is_none()
-        {
-            if let Err(e) =
-                scrap::android::call_main_service_set_by_name("stop_capture", None, None)
-            {
-                log::debug!("stop_capture err:{}", e);
-            }
-        }
+        // NOTE: we intentionally do NOT stop capture when the last client
+        // disconnects. Stopping it here desynchronized the phone's capture
+        // state (Kotlin _isStart=false while Flutter still thinks sharing is
+        // on), and reliably restarting it on reconnect was fragile (no video,
+        // stale "waiting for image" sessions). Keep capture running while
+        // sharing is on so a disconnect+reconnect just keeps streaming.
+        // Capture is fully torn down via stop_service -> destroy().
 
         self.ui_handler.remove_connection(id, close);
     }

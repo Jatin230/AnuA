@@ -214,6 +214,8 @@ class MainService : Service() {
     private val wakeLock: PowerManager.WakeLock by lazy { powerManager.newWakeLock(PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "anuvadini:wakelock")}
 
     companion object {
+        @Volatile
+        private var instance: MainService? = null
         private var _isReady = false // media permission ready status
         private var _isStart = false // screen capture start status
         private var _isAudioStart = false // audio capture start status
@@ -223,6 +225,10 @@ class MainService : Service() {
             get() = _isStart
         val isAudioStart: Boolean
             get() = _isAudioStart
+        // A projection is held while the service is running with granted
+        // consent; used to decide whether init_service must re-prompt.
+        val hasProjection: Boolean
+            get() = instance?.mediaProjection != null
     }
 
     private val logTag = "LOG_SERVICE"
@@ -230,6 +236,13 @@ class MainService : Service() {
     private val binder = LocalBinder()
 
     private var reuseVirtualDisplay = false
+
+    // Guards video frame delivery vs capture start/stop. The ImageReader
+    // listener thread delivers frames via FFI.onVideoFrameUpdate (which copies a
+    // direct ByteBuffer backed by the ImageReader surface). Rotation triggers a
+    // stopCapture()+startCapture() on the main thread; without this lock a frame
+    // could still be copied from a released surface -> native crash.
+    private val captureLock = Any()
 
     // video
     private var mediaProjection: MediaProjection? = null
@@ -250,6 +263,7 @@ class MainService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(logTag,"MainService onCreate, sdk int:${Build.VERSION.SDK_INT} reuseVirtualDisplay:$reuseVirtualDisplay")
+        instance = this
         FFI.init(this)
         HandlerThread("Service", Process.THREAD_PRIORITY_BACKGROUND).apply {
             start()
@@ -268,6 +282,7 @@ class MainService : Service() {
     }
 
     override fun onDestroy() {
+        instance = null
         checkMediaPermission()
         stopService(Intent(this, FloatingWindowService::class.java))
         super.onDestroy()
@@ -322,9 +337,26 @@ class MainService : Service() {
                 // still false here, so we must NOT call startCapture() — Rust will call
                 // it itself once it has set the scale.
                 if (_isStart) {
-                    stopCapture()
+                    // Size change while capturing (rotation / half_scale). Rebuild the
+                    // ImageReader surface for the new dimensions and resize the existing
+                    // VirtualDisplay in place. Do NOT stopCapture()+startCapture(): that
+                    // releases the VirtualDisplay and calls
+                    // MediaProjection#createVirtualDisplay() a second time on the same
+                    // token, which Android forbids ("Don't take multiple captures ... on
+                    // the same instance"). The resulting SecurityException leaves the
+                    // token unusable, and the subsequent audio playback-capture
+                    // registration then throws UnsupportedOperationException and crashes.
+                    synchronized(captureLock) {
+                        imageReader?.close()
+                        imageReader = null
+                        surface?.release()
+                        surface = null
+                        surface = createSurface()
+                        surface?.let {
+                            mediaProjection?.let { mp -> createOrSetVirtualDisplay(mp, it) }
+                        }
+                    }
                     FFI.refreshScreen()
-                    startCapture()
                 } else {
                     FFI.refreshScreen()
                 }
@@ -351,9 +383,6 @@ class MainService : Service() {
         super.onStartCommand(intent, flags, startId)
         createForegroundNotification()
         if (intent?.action == ACT_INIT_MEDIA_PROJECTION_AND_SERVICE) {
-            if (intent.getBooleanExtra(EXT_INIT_FROM_BOOT, false)) {
-                FFI.startService()
-            }
             Log.d(logTag, "service starting: ${startId}:${Thread.currentThread()}")
             val mediaProjectionManager =
                 getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -371,14 +400,20 @@ class MainService : Service() {
                         // System stopped the projection (e.g., user revoked permission)
                         _isStart = false
                         _isReady = false
+                        // Drop the dead projection so hasProjection() is false and a
+                        // manual re-enable re-requests consent (never on a connection).
+                        mediaProjection = null
                         FFI.setFrameRawEnable("video", false)
                         Handler(Looper.getMainLooper()).post {
                             checkMediaPermission()
                         }
                     }
                 }, Handler(Looper.getMainLooper()))
-                checkMediaPermission()
                 _isReady = true
+                // Report media=true only AFTER _isReady is set, otherwise Flutter
+                // is told the projection is not granted and never restarts capture
+                // after a reconnect re-request of the consent dialog.
+                checkMediaPermission()
                 createForegroundNotification()
             } ?: let {
                 Log.d(logTag, "getParcelableExtra intent null, invoke requestMediaProjection")
@@ -417,15 +452,17 @@ class MainService : Service() {
                 ).apply {
                     setOnImageAvailableListener({ imageReader: ImageReader ->
                         try {
-                            // If not call acquireLatestImage, listener will not be called again
-                            imageReader.acquireLatestImage().use { image ->
-                                if (image == null || !isStart) return@setOnImageAvailableListener
-                                val planes = image.planes
-                                val buffer = planes[0].buffer
-                                val size = buffer.remaining()
-                                Log.d(logTag, "ImageReader frame: size=$size")
-                                buffer.rewind()
-                                FFI.onVideoFrameUpdate(buffer)
+                            synchronized(captureLock) {
+                                // If not call acquireLatestImage, listener will not be called again
+                                imageReader.acquireLatestImage().use { image ->
+                                    if (image == null || !isStart) return@setOnImageAvailableListener
+                                    val planes = image.planes
+                                    val buffer = planes[0].buffer
+                                    val size = buffer.remaining()
+                                    Log.d(logTag, "ImageReader frame: size=$size")
+                                    buffer.rewind()
+                                    FFI.onVideoFrameUpdate(buffer)
+                                }
                             }
                         } catch (e: java.lang.Exception) {
                             Log.e(logTag, "ImageReader callback error: ${e.message}")
@@ -446,8 +483,10 @@ class MainService : Service() {
     }
 
     fun startCapture(): Boolean {
+        synchronized(captureLock) {
         Log.d(logTag, "startCapture called, isStart=$isStart, mediaProjection=$mediaProjection")
         if (isStart) {
+            FFI.setFrameRawEnable("video", true)
             return true
         }
         if (mediaProjection == null) {
@@ -487,10 +526,11 @@ class MainService : Service() {
         }
         checkMediaPermission()
         return true
+        }
     }
 
-    @Synchronized
     fun stopCapture() {
+        synchronized(captureLock) {
         Log.d(logTag, "Stop Capture")
         FFI.setFrameRawEnable("video",false)
         _isStart = false
@@ -524,6 +564,7 @@ class MainService : Service() {
         // release audio
         _isAudioStart = false
         audioRecordHandle.tryReleaseAudio()
+        }
     }
 
     fun destroy() {
@@ -601,12 +642,16 @@ class MainService : Service() {
                 }
             }
         } catch (e: SecurityException) {
-            Log.w(logTag, "createOrSetVirtualDisplay: got SecurityException, re-requesting confirmation");
+            Log.w(logTag, "createOrSetVirtualDisplay: got SecurityException, projection no longer usable: ${e.message}")
             _isStart = false
+            _isReady = false
             FFI.setFrameRawEnable("video",false)
             MainActivity.rdClipboardManager?.setCaptureStarted(_isStart)
-            // This initiates a prompt dialog for the user to confirm screen projection.
-            requestMediaProjection()
+            // Deliberately do NOT requestMediaProjection() here: that would pop the
+            // consent dialog in the middle of a connection. Report media=false so
+            // the UI reflects that sharing stopped; the user re-enables sharing
+            // manually to re-grant consent.
+            checkMediaPermission()
         }
     }
 

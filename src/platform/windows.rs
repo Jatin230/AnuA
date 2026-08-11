@@ -2297,6 +2297,64 @@ pub fn elevate(arg: &str) -> ResultType<bool> {
     )
 }
 
+/// Check whether the inbound firewall rule allowing this app was already added.
+///
+/// A marker file is written by the elevated helper after the rule is created.
+/// Installed mode already adds firewall rules during setup, so it always counts.
+pub fn is_firewall_rule_added() -> bool {
+    if is_installed() {
+        return true;
+    }
+    Config::path("firewall-rule-added").exists()
+}
+
+/// Poll for the marker file written by the elevated `--firewall-allow` process.
+pub fn wait_for_firewall_rule(secs: u64) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        if is_firewall_rule_added() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    false
+}
+
+/// Add an inbound firewall rule for the current executable (admin required).
+///
+/// Called by the elevated `--firewall-allow` process. On success a marker file
+/// is written so the normal (non-elevated) app can detect the rule is in place.
+pub fn add_firewall_rule() -> ResultType<()> {
+    let exe = std::env::current_exe()?;
+    let exe = exe.to_string_lossy().to_string();
+    let app_name = config::APP_NAME.read().unwrap().clone();
+    let output = std::process::Command::new("netsh")
+        .args([
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
+            &format!("name={app_name} LAN"),
+            "dir=in",
+            "action=allow",
+            &format!("program={exe}"),
+            "enable=yes",
+        ])
+        .output()
+        .map_err(|e| anyhow!("Failed to run netsh: {}", e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        bail!("netsh failed: {}{}", stdout.trim(), stderr.trim());
+    }
+    let marker = Config::path("firewall-rule-added");
+    if let Some(parent) = marker.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::write(marker, "1").ok();
+    Ok(())
+}
+
 pub fn run_as_system(arg: &str) -> ResultType<()> {
     let exe = std::env::current_exe()?.to_string_lossy().to_string();
     if impersonate_system::run_as_system(&exe, arg).is_err() {
