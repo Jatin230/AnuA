@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../common.dart';
-import '../../models/model.dart';
+import '../../models/platform_model.dart';
 import '../device_model.dart';
 import '../device_session_manager.dart';
 import '../widgets/device_list_sheet.dart';
@@ -57,9 +57,76 @@ class _MultiSessionPageState extends State<MultiSessionPage>
       builder: (_) => const DeviceListSheet(),
     );
 
-    if (result == 'scan') {
-      _pushScanner();
+    if (result == 'add') {
+      _showAddDeviceDialog();
     }
+  }
+
+  Future<void> _showAddDeviceDialog() async {
+    await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(translate('Add Connection')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.qr_code_scanner),
+                title: Text(translate('Scan QR Code')),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _pushScanner();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.keyboard),
+                title: Text(translate('Enter Remote ID')),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _showManualIdDialog();
+                },
+              ),
+            ],
+          ),
+        );
+      }
+    );
+  }
+
+  Future<void> _showManualIdDialog() async {
+    String manualId = '';
+    await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(translate('Enter Remote ID')),
+          content: TextField(
+            autofocus: true,
+            decoration: InputDecoration(hintText: translate('Remote ID')),
+            onChanged: (v) => manualId = v,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(translate('Cancel')),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                if (manualId.isNotEmpty) {
+                  manualId = manualId.replaceAll(' ', '');
+                  final finalId = await bind.mainHandleRelayId(id: manualId);
+                  _manager.createDevice(id: finalId, label: finalId);
+                  if (mounted) setState(() {});
+                }
+              },
+              child: Text(translate('Connect')),
+            ),
+          ],
+        );
+      }
+    );
   }
 
   Future<void> _pushScanner() async {
@@ -73,6 +140,15 @@ class _MultiSessionPageState extends State<MultiSessionPage>
               label: label,
               password: password,
               nostrMode: 'control',
+            );
+          },
+          onLanControl: (uri, password) {
+            final label = lanIpFromDirectTcp(uri) ?? uri;
+            _manager.createDevice(
+              id: uri,
+              label: label,
+              password: password,
+              nostrMode: null,
             );
           },
         ),
@@ -95,6 +171,8 @@ class _MultiSessionPageState extends State<MultiSessionPage>
         key: ValueKey(device.sessionId.toString()),
         id: device.id,
         password: device.password,
+        isSharedPassword: device.isSharedPassword,
+        forceRelay: device.forceRelay,
         nostrMode: device.nostrMode,
       ),
     );

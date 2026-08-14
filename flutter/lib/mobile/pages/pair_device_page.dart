@@ -54,7 +54,11 @@ class _PairDevicePageState extends State<PairDevicePage> {
         password: password.isEmpty ? null : password);
     if (!mounted) return;
     await showSaveAsDeviceDialog(context,
-        remoteId: targetId, name: ip, lanIp: ip, platform: DevicePlatform.unknown);
+        remoteId: targetId,
+        name: ip,
+        lanIp: ip,
+        platform: DevicePlatform.unknown,
+        password: password.isEmpty ? null : password);
   }
 
   Future<void> _scanQr() async {
@@ -253,6 +257,7 @@ Future<bool> showSaveAsDeviceDialog(
   String? name,
   String? lanIp,
   DevicePlatform? platform,
+  String? password,
 }) async {
   final nameController = TextEditingController(text: name ?? remoteId);
   final saved = await showDialog<bool>(
@@ -298,6 +303,7 @@ Future<bool> showSaveAsDeviceDialog(
       lanIp: lanIp ?? '',
       platform: platform ?? DevicePlatform.unknown,
       lastConnected: DateTime.now().millisecondsSinceEpoch,
+      password: password ?? '',
     ));
     if (context.mounted) {
       showToast('$finalName added to My Devices');

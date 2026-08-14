@@ -2,13 +2,18 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/common/shared_state.dart';
+import 'package:flutter_hbb/common/widgets/overlay.dart';
 import 'package:flutter_hbb/common/widgets/remote_input.dart';
+import 'package:flutter_hbb/common/widgets/toolbar.dart';
+import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/input_model.dart';
@@ -23,15 +28,38 @@ import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter_hbb/debug_agent_log.dart';
 
+// Top-level function required by compute() — must not be a closure or method.
+Future<List<NetworkInterface>> _listNetworkInterfaces(void _) =>
+    NetworkInterface.list(includeLoopback: false, type: InternetAddressType.IPv4);
+
 class MobileControlPage extends StatefulWidget {
   const MobileControlPage({super.key});
 
   @override
-  // ignore: library_private_types_in_public_api
+  State<MobileControlPage> createState() => _MobileControlPageWrapperState();
+}
+
+class _MobileControlPageWrapperState extends State<MobileControlPage> {
+  final _overlayKeyState = BlockableOverlayState();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlockableOverlay(
+      state: _overlayKeyState,
+      underlying: _MobileControlPageContent(overlayKeyState: _overlayKeyState),
+    );
+  }
+}
+
+class _MobileControlPageContent extends StatefulWidget {
+  final BlockableOverlayState overlayKeyState;
+  const _MobileControlPageContent({required this.overlayKeyState});
+
+  @override
   _MobileControlPageState createState() => _MobileControlPageState();
 }
 
-class _MobileControlPageState extends State<MobileControlPage> {
+class _MobileControlPageState extends State<_MobileControlPageContent> {
   String? _connectionUrl;
   String? _nostrUri;
   String? _nostrError;
@@ -48,13 +76,19 @@ class _MobileControlPageState extends State<MobileControlPage> {
   bool _sidebarExpanded = true;
   final Set<String> _preAuthorizedPeerIds = {};
 
+  /// Dedupe guard for the registration action dialog. The phone announces via
+  /// several nostr relays at once, each firing a `mobile_device_registered`
+  /// event for the same device; this set ensures only one dialog is shown.
+  final Set<String> _pendingPromptKeys = {};
+  OverlayEntry? _mobileActionsEntry;
+
   bool _serverReady = false;
   bool _rustAlive = false;
   String? _listenerError;
   List<String> _allLocalIps = [];
   String? _selectedLanIp;
   Timer? _listenerProbe;
-  final _overlayKeyState = OverlayKeyState();
+  final _overlayKeyState = BlockableOverlayState();
 
   @override
   void initState() {
@@ -123,6 +157,8 @@ class _MobileControlPageState extends State<MobileControlPage> {
     _imageTimeout?.cancel();
     _manualIpController.dispose();
     _remoteIdController.dispose();
+    _mobileActionsEntry?.remove();
+    _mobileActionsEntry = null;
     for (final ffi in _activeSessions.values) {
       ffi.close();
     }
@@ -187,14 +223,22 @@ class _MobileControlPageState extends State<MobileControlPage> {
         if (!mounted) return;
         final key = _deviceKey(device);
         final status = _sessionStatus[key];
-        if (_activeSessions.containsKey(key) || status == 'Connecting' || status == 'Connected') {
+        // Only block if a session is actively in progress for this device.
+        // After a disconnect the status is 'Disconnected' and the device
+        // was removed from _registeredDevices, so re-registration must be
+        // allowed to go through.
+        if (_activeSessions.containsKey(key) ||
+            status == 'Connecting' ||
+            status == 'Connected') {
           return;
         }
-        // Guard against duplicate registration events (phone sends ANUVADINI_HELLO
-        // via both direct TCP and Nostr relay, causing two overlapping dialogs).
-        if (_registeredDevices.any((d) => _deviceKey(d) == key)) {
+        // Dedupe: the phone announces via several nostr relays at once, and
+        // each relay delivers the same registration event. Only show the
+        // action dialog once until the current dialog has been answered.
+        if (_pendingPromptKeys.contains(key)) {
           return;
         }
+        _pendingPromptKeys.add(key);
         setState(() {
           _registeredDevices.removeWhere((d) => _deviceKey(d) == key);
           _registeredDevices.add(device);
@@ -218,6 +262,17 @@ class _MobileControlPageState extends State<MobileControlPage> {
     });
 
     platformFFI.registerEventHandler(
+        'on_nostr_webrtc_offer_ready', 'mobile_control_page_nostr_offer', (evt) async {
+      if (!mounted) return;
+      _nostrWatchdog?.cancel();
+      setState(() {
+        _nostrUri = _compactNostrQrUri(evt['uri'] ?? '');
+        _nostrError = null;
+        _nostrLoading = false;
+      });
+    });
+
+    platformFFI.registerEventHandler(
         'on_nostr_webrtc_error', 'mobile_control_page_nostr_err', (evt) async {
       if (!mounted) return;
       _nostrWatchdog?.cancel();
@@ -230,7 +285,6 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
   void _showDeviceActionDialog(Map<String, String> device) {
     final hasPassword = (device['temp_password'] ?? '').isNotEmpty;
-    final isNostr = device['ip']?.startsWith('nostr-webrtc://') ?? false;
     print('L2: _showDeviceActionDialog: ${device['name']} ${device['id']} hasPassword=$hasPassword');
     agentDebugLog('L2', 'mobile_control_page.dart:_showDeviceActionDialog',
         'action dialog shown', {
@@ -270,7 +324,11 @@ class _MobileControlPageState extends State<MobileControlPage> {
           ),
         ],
       ),
-    );
+    ).then((_) {
+      // Radio relays deliver the same registration event multiple times; the
+      // guard is only released once this dialog has been answered.
+      if (mounted) _pendingPromptKeys.remove(_deviceKey(device));
+    });
   }
 
   Future<void> _generateConnectionUrl() async {
@@ -280,75 +338,93 @@ class _MobileControlPageState extends State<MobileControlPage> {
       _allLocalIps = [];
     });
     try {
-      final interfaces = await NetworkInterface.list(
-          includeLoopback: false, type: InternetAddressType.IPv4);
-      for (var interface in interfaces) {
-        final name = interface.name.toLowerCase();
-        if (name.contains('wsl') ||
-            name.contains('virtual') ||
-            name.contains('vbox') ||
-            name.contains('vmware') ||
-            name.contains('vethernet') ||
-            name.contains('hyper-v') ||
-            name.contains('hyperv') ||
-            name.contains('docker') ||
-            name.contains('npcap') ||
-            name.contains('bluetooth') ||
-            name.contains('tun') ||
-            name.contains('tap') ||
-            name.contains('host-only') ||
-            name.contains('loopback')) {
-          continue;
-        }
-        for (var addr in interface.addresses) {
-          if (!addr.isLoopback && _isUsableLanIp(addr.address)) {
-            _allLocalIps.add(addr.address);
-          }
-        }
+      // Rust resolves the LAN IP from the very socket it actually uses when it
+      // connects outbound, so it is the most trustworthy source. Read it
+      // FIRST: NetworkInterface.list() can hang forever on Windows when
+      // virtual adapters (WSL/Hyper-V) are present, which would otherwise
+      // leave the QR stuck on a loading spinner.
+      final rustIp = bind.mainGetOptionSync(key: 'local-ip-addr');
+      if (rustIp.isNotEmpty && _isUsableLanIp(rustIp)) {
+        _allLocalIps.add(rustIp);
       }
 
+      // ONLY poll all interfaces if Rust failed to give us a valid IP.
+      // NetworkInterface.list() is known to hang indefinitely on some Windows machines
+      // with Hyper-V or WSL adapters, even bypassing Dart's Future.timeout in some engine versions.
       if (_allLocalIps.isEmpty) {
-        for (var interface in interfaces) {
-          for (var addr in interface.addresses) {
-            if (!addr.isLoopback && _isUsableLanIp(addr.address)) {
-              _allLocalIps.add(addr.address);
+        try {
+          // Run in a separate isolate so Windows can't hang the main thread.
+          // compute() spawns a new Dart isolate; if it takes >4s we cancel it.
+          final interfaces = await compute(_listNetworkInterfaces, null)
+              .timeout(const Duration(seconds: 4),
+                  onTimeout: () => <NetworkInterface>[]);
+          for (var interface in interfaces) {
+            final name = interface.name.toLowerCase();
+            if (name.contains('wsl') ||
+                name.contains('virtual') ||
+                name.contains('vbox') ||
+                name.contains('vmware') ||
+                name.contains('vethernet') ||
+                name.contains('hyper-v') ||
+                name.contains('hyperv') ||
+                name.contains('docker') ||
+                name.contains('npcap') ||
+                name.contains('bluetooth') ||
+                name.contains('tun') ||
+                name.contains('tap') ||
+                name.contains('host-only') ||
+                name.contains('loopback')) {
+              continue;
+            }
+            for (var addr in interface.addresses) {
+              if (!addr.isLoopback && _isUsableLanIp(addr.address)) {
+                _allLocalIps.add(addr.address);
+              }
             }
           }
+        } catch (_) {
+          // Enumeration failed/timed out
         }
       }
 
+      _allLocalIps = _allLocalIps.toSet().toList();
+
       if (_allLocalIps.isEmpty) {
-        setState(() {
-          _error = 'No network IP found. Connect to Wi-Fi.';
-          _loading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _error = 'No network IP found. Connect to Wi-Fi or check adapters.';
+          });
+        }
         return;
       }
 
-      // Prefer the Rust-detected default-route IP over interface enumeration.
-      final rustIp = bind.mainGetOptionSync(key: 'local-ip-addr');
-      if (rustIp.isNotEmpty &&
-          _isUsableLanIp(rustIp) &&
-          !_allLocalIps.contains(rustIp)) {
-        _allLocalIps.insert(0, rustIp);
-      }
-
       final localIp = _selectedLanIp ??
-          (rustIp.isNotEmpty && _isUsableLanIp(rustIp) && _allLocalIps.contains(rustIp)
+          (rustIp.isNotEmpty &&
+                  _allLocalIps.contains(rustIp) &&
+                  _isUsableLanIp(rustIp)
               ? rustIp
               : _pickBestLocalIp(_allLocalIps));
 
       final url = 'anuvadini://direct-tcp:${localIp}_port_21118';
-      setState(() {
-        _connectionUrl = url;
-        _selectedLanIp = localIp;
-        _loading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _connectionUrl = url;
+          _selectedLanIp = localIp;
+        });
+      }
+    } catch (e, stack) {
+      debugPrint('QR generation error: $e\n$stack');
+      if (mounted) {
+        setState(() {
+          _error = 'Error finding IP: $e';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
     }
     // Nostr QR is generated lazily when the user first taps the Nostr chip.
   }
@@ -447,12 +523,9 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Overlay(
-      key: _overlayKeyState.key,
-      initialEntries: [
-        OverlayEntry(builder: (context) => _buildScaffold()),
-      ],
-    );
+    // The BlockableOverlay wrapper is now outside this widget, 
+    // so setState successfully rebuilds this tree.
+    return _buildScaffold();
   }
 
   Widget _buildScaffold() {
@@ -524,7 +597,29 @@ class _MobileControlPageState extends State<MobileControlPage> {
         showToast('Enter a Remote ID');
         return;
       }
+      // LAN first: if the entered value is a reachable LAN IP, connect via
+      // direct TCP with auto-auth; otherwise use the standard connect flow
+      // (which tries LAN-then-relay).
+      if (_isIpv4(id)) {
+        final ready = await _isLanReachable(id);
+        if (ready) {
+          _connectLanFirst(id);
+          return;
+        }
+        showToast('$id not reachable on LAN; falling back to standard connect.');
+      }
       connect(context, id);
+    }
+  }
+
+  Future<bool> _isLanReachable(String ip) async {
+    try {
+      final socket = await Socket.connect(ip, 21118,
+          timeout: const Duration(seconds: 2));
+      await socket.close();
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -647,7 +742,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          'Nostr',
+                          'Internet',
                           style: TextStyle(
                             fontSize: 12,
                             color:
@@ -660,7 +755,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
                 ),
                 ElevatedButton(
                   onPressed: _onRemoteConnect,
-                  child: Text(_nostrConnectMode ? 'Nostr Connect' : 'Connect'),
+                  child: Text(_nostrConnectMode ? 'Internet Connect' : 'Connect'),
                 ),
               ],
             ),
@@ -759,7 +854,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
             const SizedBox(height: 6),
             const Text('Pair New Device', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            // Tab selector: LAN vs Nostr
+            // Tab selector: LAN vs Internet
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -770,7 +865,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
                 ),
                 const SizedBox(width: 8),
                 ChoiceChip(
-                  label: const Text('Nostr'),
+                  label: const Text('Internet'),
                   selected: _qrTab == 1,
                   onSelected: (_) => _onNostrTabSelected(),
                   selectedColor: Colors.deepPurple.withOpacity(0.2),
@@ -781,6 +876,10 @@ class _MobileControlPageState extends State<MobileControlPage> {
             if (_qrTab == 0) ...[
               if (_loading) const CircularProgressIndicator(),
               if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
+              
+              // DEBUG INFO FOR JATIN:
+              Text('DEBUG: loading=$_loading, error=$_error, url=${_connectionUrl?.substring(0, 30) ?? 'null'}, ips=${_allLocalIps.length}', style: TextStyle(fontSize: 8, color: Colors.blue)),
+              
               if (_connectionUrl != null) ...[
                 QrImageView(
                   data: _connectionUrl!,
@@ -818,31 +917,6 @@ class _MobileControlPageState extends State<MobileControlPage> {
                     style: TextStyle(fontSize: 9, color: Colors.grey[500]),
                   ),
                 ],
-                if (_allLocalIps.length > 1) ...[
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
-                    alignment: WrapAlignment.center,
-                    children: _allLocalIps.map((ip) {
-                      final selected = ip == _selectedLanIp;
-                      return ChoiceChip(
-                        label: Text(ip, style: const TextStyle(fontSize: 10)),
-                        selected: selected,
-                        onSelected: (_) {
-                          setState(() {
-                            _selectedLanIp = ip;
-                            _connectionUrl = 'anuvadini://direct-tcp:${ip}_port_21118';
-                          });
-                        },
-                      );
-                    }).toList(),
-                  ),
-                  Text(
-                    'Wrong IP? Tap the address your phone can reach.',
-                    style: TextStyle(fontSize: 9, color: Colors.grey[500]),
-                  ),
-                ],
                 const SizedBox(height: 6),
                 OutlinedButton.icon(
                   onPressed: _generateConnectionUrl,
@@ -851,6 +925,9 @@ class _MobileControlPageState extends State<MobileControlPage> {
                 ),
               ],
             ] else ...[
+              // DEBUG INFO FOR JATIN (NOSTR):
+              Text('DEBUG: nostrLoading=$_nostrLoading, error=$_nostrError, requested=$_nostrRequested, uri=${_nostrUri?.substring(0, 30) ?? 'null'}', style: TextStyle(fontSize: 8, color: Colors.blue)),
+              
               if (_nostrLoading)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
@@ -858,7 +935,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
                     children: [
                       CircularProgressIndicator(),
                       SizedBox(height: 8),
-                      Text('Generating Nostr offer...', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text('Generating offer...', style: TextStyle(fontSize: 11, color: Colors.grey)),
                     ],
                   ),
                 )
@@ -871,7 +948,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
                     children: [
                       CircularProgressIndicator(),
                       SizedBox(height: 8),
-                      Text('Starting Nostr...', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text('Starting...', style: TextStyle(fontSize: 11, color: Colors.grey)),
                     ],
                   ),
                 ),
@@ -970,6 +1047,53 @@ class _MobileControlPageState extends State<MobileControlPage> {
   }
 
   Widget _buildDeviceDashboard() {
+    // Maximized single-device view (full-page emulator).
+    if (_maximizedKey != null) {
+      final device = _registeredDevices.cast<Map<String, String>?>().firstWhere(
+          (d) => _deviceKey(d!) == _maximizedKey,
+          orElse: () => null);
+      if (device != null) {
+        final key = _deviceKey(device);
+        final ffi = _activeSessions[key];
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      device['name'] ?? 'Device',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Chip(
+                    label: Text(
+                        _sessionStatus[key] ?? 'Disconnected'),
+                    backgroundColor: _statusColor(
+                            _sessionStatus[key] ?? 'Disconnected')
+                        .withOpacity(0.12),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.link_off),
+                    tooltip: 'Disconnect',
+                    onPressed: () => _disconnectDevice(device),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: _buildStreamOverlay(device, key, ffi),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -1095,13 +1219,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
             ),
             const SizedBox(height: 10),
             Expanded(
-              child: Container(
-                decoration: BoxDecoration(color: const Color(0xFF212121), borderRadius: BorderRadius.circular(8)),
-                clipBehavior: Clip.antiAlias,
-                child: ffi == null
-                    ? const Center(child: Text('Not Connected', style: TextStyle(color: Colors.white70)))
-                    : InlineStreamPanel(deviceKey: key, ffi: ffi),
-              ),
+              child: _buildStreamOverlay(device, key, ffi),
             ),
             const SizedBox(height: 10),
             Row(
@@ -1144,6 +1262,397 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
   String _deviceKey(Map<String, String> device) => device['id'] ?? device['ip'] ?? '';
 
+  /// Grey screen placeholder with a phone-to-phone style toolbar overlay.
+  /// The toolbar sits on the left (like the phone-to-phone bottom bar) and the
+  /// bolt/mobile-actions button sits on the right of the grey area. A
+  /// minimize/maximize toggle is placed at the top-right corner of the screen.
+  Widget _buildStreamOverlay(
+      Map<String, String> device, String key, FFI? ffi) {
+    final isMaximized = _maximizedKey == key;
+    return Container(
+      decoration: BoxDecoration(
+          color: const Color(0xFF212121),
+          borderRadius: BorderRadius.circular(8)),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ffi != null
+              ? InlineStreamPanel(deviceKey: key, ffi: ffi)
+              : const Center(
+                  child: Text('Not Connected',
+                      style: TextStyle(color: Colors.white70))),
+          Positioned(
+            top: 4,
+            right: 4,
+            child: IconButton(
+              icon: Icon(
+                  isMaximized ? Icons.close_fullscreen : Icons.open_in_full,
+                  color: Colors.white70,
+                  size: 18),
+              tooltip: isMaximized ? 'Minimize' : 'Maximize',
+              onPressed: () => setState(
+                  () => _maximizedKey = isMaximized ? null : key),
+            ),
+          ),
+          Positioned(
+            left: 8,
+            right: 8,
+            bottom: 8,
+            child: _buildInlineToolbar(device, key, ffi),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Phone-to-phone style toolbar: left cluster of controls, bolt actions on
+  /// the right. Buttons are disabled when there is no active session.
+  Widget _buildInlineToolbar(
+      Map<String, String> device, String key, FFI? ffi) {
+    final connected = ffi != null;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.55),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              _toolbarActionButton(
+                icon: const Icon(Icons.power_settings_new_rounded),
+                tooltip: 'Disconnect',
+                accentColor: Colors.redAccent,
+                onPressed: connected
+                    ? () => _disconnectDevice(device)
+                    : null,
+              ),
+              _toolbarActionButton(
+                icon: const Icon(Icons.tune_rounded),
+                tooltip: 'Options',
+                onPressed:
+                    connected ? () => _showInlineOptions(ffi, key) : null,
+              ),
+              _toolbarActionButton(
+                icon: const Icon(Icons.keyboard_alt_outlined),
+                tooltip: 'Keyboard',
+                onPressed:
+                    connected ? () => _openInlineKeyboard(ffi) : null,
+              ),
+              _toolbarActionButton(
+                icon: const Icon(Icons.touch_app_rounded),
+                tooltip: 'Touch / Mouse',
+                onPressed: connected
+                    ? () => _toggleInlineTouchMode(ffi)
+                    : null,
+              ),
+              _toolbarActionButton(
+                icon: const Icon(Icons.forum_rounded),
+                tooltip: 'Chat',
+                accentColor: const Color(0xFF14B8A6),
+                onPressed: connected ? () => _openInlineChat(ffi) : null,
+              ),
+              _toolbarActionButton(
+                icon: const Icon(Icons.more_horiz_rounded),
+                tooltip: 'More',
+                accentColor: const Color(0xFF6366F1),
+                onPressed: connected ? () => _showInlineMore(ffi, key) : null,
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              _navActionButton(
+                icon: const Icon(Icons.arrow_back_rounded),
+                tooltip: 'Back',
+                accentColor: const Color(0xFF14B8A6),
+                onPressed: connected ? () => ffi.inputModel.onMobileBack() : null,
+              ),
+              _navActionButton(
+                icon: const Icon(Icons.space_dashboard_rounded),
+                tooltip: 'Home',
+                accentColor: const Color(0xFF14B8A6),
+                onPressed: connected ? () => ffi.inputModel.onMobileHome() : null,
+              ),
+              _navActionButton(
+                icon: const Icon(Icons.apps_rounded),
+                tooltip: 'Apps',
+                accentColor: const Color(0xFF14B8A6),
+                onPressed: connected ? () => ffi.inputModel.onMobileApps() : null,
+              ),
+              _navActionButton(
+                icon: const Icon(Icons.volume_down_rounded),
+                tooltip: 'Volume down',
+                accentColor: const Color(0xFF14B8A6),
+                onPressed: connected
+                    ? () => ffi.inputModel.onMobileVolumeDown()
+                    : null,
+              ),
+              _navActionButton(
+                icon: const Icon(Icons.volume_up_rounded),
+                tooltip: 'Volume up',
+                accentColor: const Color(0xFF14B8A6),
+                onPressed: connected
+                    ? () => ffi.inputModel.onMobileVolumeUp()
+                    : null,
+              ),
+              _toolbarActionButton(
+                icon: const Icon(Icons.bolt_rounded),
+                tooltip: 'Actions',
+                accentColor: const Color(0xFF0EA5E9),
+                onPressed: connected
+                    ? () => _toggleInlineMobileActions(ffi)
+                    : null,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toolbarActionButton({
+    required Widget icon,
+    required String tooltip,
+    VoidCallback? onPressed,
+    bool active = false,
+    Color? accentColor,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final accent = accentColor ?? scheme.primary;
+    final enabled = onPressed != null;
+    final backgroundColor = !enabled
+        ? scheme.surface.withOpacity(0.45)
+        : active
+            ? accent.withOpacity(0.2)
+            : scheme.surface.withOpacity(0.82);
+    final borderColor = !enabled
+        ? scheme.onSurface.withOpacity(0.12)
+        : active
+            ? accent.withOpacity(0.75)
+            : scheme.onSurface.withOpacity(0.16);
+
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor),
+        ),
+        child: IconTheme(
+          data: IconThemeData(
+            color: !enabled
+                ? scheme.onSurface.withOpacity(0.35)
+                : active
+                    ? accent
+                    : scheme.onSurface.withOpacity(0.84),
+            size: 18,
+          ),
+          child: IconButton(
+            constraints:
+                const BoxConstraints.tightFor(width: 36, height: 36),
+            padding: EdgeInsets.zero,
+            splashRadius: 18,
+            iconSize: 18,
+            onPressed: onPressed,
+            icon: icon,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Compact variant of [_toolbarActionButton] used by the persistent
+  /// phone navigation cluster (back/home/apps/volume) pinned to the bottom
+  /// of the stream overlay.
+  Widget _navActionButton({
+    required Widget icon,
+    required String tooltip,
+    VoidCallback? onPressed,
+    Color? accentColor,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final accent = accentColor ?? scheme.primary;
+    final enabled = onPressed != null;
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 1),
+        decoration: BoxDecoration(
+          color: enabled
+              ? accent.withOpacity(0.92)
+              : scheme.surface.withOpacity(0.45),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: IconTheme(
+          data: IconThemeData(
+            color: enabled ? Colors.white : scheme.onSurface.withOpacity(0.35),
+            size: 17,
+          ),
+          child: IconButton(
+            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            padding: EdgeInsets.zero,
+            splashRadius: 15,
+            iconSize: 17,
+            onPressed: onPressed,
+            icon: icon,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openInlineKeyboard(FFI ffi) {
+    try {
+      ffi.invokeMethod("enable_soft_keyboard", true);
+      showToast('Opening keyboard...');
+    } catch (e) {
+      showToast('Keyboard: $e');
+    }
+  }
+
+  void _toggleInlineTouchMode(FFI ffi) {
+    // On Android peers the phone is already in touch mode; the toggle is only
+    // meaningful for desktop peers and is a no-op otherwise.
+    if (ffi.ffiModel.isPeerAndroid) {
+      showToast('Touch mode is enabled on this device.');
+      return;
+    }
+    ffi.ffiModel.toggleTouchMode();
+    final v = ffi.ffiModel.touchMode ? 'Y' : 'N';
+    bind.mainSetLocalOption(key: kOptionTouchMode, value: v);
+    setState(() {});
+    showToast(ffi.ffiModel.touchMode ? 'Touch mode' : 'Mouse mode');
+  }
+
+  void _openInlineChat(FFI ffi) {
+    try {
+      ffi.chatModel
+          .changeCurrentKey(MessageKey(ffi.id, ChatModel.clientModeID));
+      ffi.chatModel.toggleChatOverlay();
+    } catch (e) {
+      showToast('Chat: $e');
+    }
+  }
+
+  void _showInlineOptions(FFI ffi, String key) {
+    try {
+      final menus = toolbarControls(context, ffi.id, ffi);
+      _showInlineMenu(ffi, menus);
+    } catch (e) {
+      showToast('Options: $e');
+    }
+  }
+
+  void _showInlineMore(FFI ffi, String key) {
+    try {
+      final mobileMenus = _inlineMobileActionMenus(ffi);
+      final menus = toolbarControls(context, ffi.id, ffi);
+      _showInlineMenu(ffi, [...mobileMenus, ...menus]);
+    } catch (e) {
+      showToast('More: $e');
+    }
+  }
+
+  void _toggleInlineMobileActions(FFI ffi) {
+    try {
+      if (_mobileActionsEntry != null) {
+        _mobileActionsEntry!.remove();
+        _mobileActionsEntry = null;
+        showToast('Hiding phone actions');
+        setState(() {});
+        return;
+      }
+      final overlayState = widget.overlayKeyState.state;
+      if (overlayState == null) {
+        showToast('Actions: overlay not ready');
+        return;
+      }
+      const double overlayW = 45;
+      const double overlayH = 200;
+      double scale = 1.0;
+      if (draggablePositions.mobileActions.isInvalid()) {
+        draggablePositions.mobileActions.update(Offset(
+            20,
+            (MediaQuery.of(context).size.height - overlayH * scale) / 2));
+      } else {
+        draggablePositions.mobileActions
+            .tryAdjust(overlayW, overlayH, scale);
+      }
+      final entry = OverlayEntry(builder: (context) {
+        return DraggableMobileActions(
+          scale: scale,
+          position: draggablePositions.mobileActions,
+          width: overlayW,
+          height: overlayH,
+          onBackPressed: ffi.inputModel.onMobileBack,
+          onHomePressed: ffi.inputModel.onMobileHome,
+          onRecentPressed: ffi.inputModel.onMobileApps,
+          onHidePressed: () => _toggleInlineMobileActions(ffi),
+        );
+      });
+      overlayState.insert(entry);
+      _mobileActionsEntry = entry;
+      showToast('Showing phone actions');
+      setState(() {});
+    } catch (e) {
+      showToast('Actions: $e');
+    }
+  }
+
+  List<TTextMenu> _inlineMobileActionMenus(FFI ffi) {
+    if (ffi.ffiModel.pi.platform != kPeerPlatformAndroid ||
+        !ffi.ffiModel.keyboard) {
+      return [];
+    }
+    return [
+      TTextMenu(
+        child: Text(translate('Back')),
+        onPressed: () => ffi.inputModel.onMobileBack(),
+      ),
+      TTextMenu(
+        child: Text(translate('Home')),
+        onPressed: () => ffi.inputModel.onMobileHome(),
+      ),
+      TTextMenu(
+        child: Text(translate('Apps')),
+        onPressed: () => ffi.inputModel.onMobileApps(),
+      ),
+      TTextMenu(
+        child: Text(translate('Volume up')),
+        onPressed: () => ffi.inputModel.onMobileVolumeUp(),
+      ),
+      TTextMenu(
+        child: Text(translate('Volume down')),
+        onPressed: () => ffi.inputModel.onMobileVolumeDown(),
+      ),
+    ];
+  }
+
+  Future<void> _showInlineMenu(FFI ffi, List<TTextMenu> menus) async {
+    if (menus.isEmpty) return;
+    final size = MediaQuery.of(context).size;
+    final items = menus
+        .asMap()
+        .entries
+        .map((e) => PopupMenuItem<int>(child: e.value.getChild(), value: e.key))
+        .toList();
+    final index = await showMenu<int>(
+      context: context,
+      position: RelativeRect.fromLTRB(size.width - 260, 100, 20, 100),
+      items: items,
+      elevation: 8,
+    );
+    if (index != null && index < menus.length) {
+      menus[index].onPressed?.call();
+    }
+  }
+
   String _deviceAddressLabel(String? ip) {
     if (ip == null || ip.isEmpty) return '-';
     if (ip.startsWith('nostr-webrtc://')) return 'Connecting...';
@@ -1153,10 +1662,42 @@ class _MobileControlPageState extends State<MobileControlPage> {
   void _connectManualIp(String ip) {
     final cleaned = ip.trim();
     if (cleaned.isEmpty) return;
+    // LAN manual connect: resolve an auto-auth password from the target's
+    // direct-server listener before dialing, so the phone accepts without an
+    // approval popup. If the listener is unreachable, connect normally.
+    _connectLanFirst(cleaned);
+  }
+
+  /// LAN-first connect: probe the target's direct-server listener, fetch an
+  /// auto-auth password via ANUVADINI_AUTH, then dial `direct-tcp:`. Falls
+  /// back to the standard connect flow when the listener is unreachable.
+  Future<void> _connectLanFirst(String ip) async {
+    String password = '';
+    try {
+      final socket = await Socket.connect(ip, 21118,
+          timeout: const Duration(seconds: 6));
+      socket.write('ANUVADINI_AUTH\n');
+      await socket.flush();
+      String response = '';
+      try {
+        await for (final chunk in socket.timeout(const Duration(seconds: 4))) {
+          response += String.fromCharCodes(chunk);
+          if (response.contains('ANUVADINI_ACK')) break;
+        }
+      } catch (_) {}
+      await socket.close();
+      if (response.contains('ANUVADINI_ACK')) {
+        final parts = response.split(':');
+        if (parts.length >= 2) password = parts.sublist(1).join(':').trim();
+      }
+    } catch (e) {
+      debugPrint('ANUVADINI_AUTH probe failed for $ip: $e');
+    }
     final device = <String, String>{
-      'id': cleaned,
-      'name': 'Manual $cleaned',
-      'ip': cleaned,
+      'id': ip,
+      'name': 'Manual $ip',
+      'ip': ip,
+      if (password.isNotEmpty) 'temp_password': password,
     };
     setState(() {
       _registeredDevices.removeWhere((d) => _deviceKey(d) == _deviceKey(device));
@@ -1202,7 +1743,7 @@ class _MobileControlPageState extends State<MobileControlPage> {
       ffi.id = connectionId;
       Get.put<FFI>(ffi, tag: 'mobile-inline-$key', permanent: false);
 
-      ffi.dialogManager.setOverlayState(_overlayKeyState);
+      widget.overlayKeyState.applyFfi(ffi);
       // #region agent log
       print('L3: _connectDevice overlay attached: ip=$ip overlayReady=${_overlayKeyState.state != null}');
       agentDebugLog('L3', 'mobile_control_page.dart:_connectDeviceWithMode', 'overlay attached', {
@@ -1294,6 +1835,9 @@ class _MobileControlPageState extends State<MobileControlPage> {
 
   Timer? _imageTimeout;
   Timer? _keepAwakeTimer;
+  // When set, the device dashboard shows this single device full-page
+  // (maximized); the grid is restored when null.
+  String? _maximizedKey;
 
   void _startKeepAwake() {
     _keepAwakeTimer?.cancel();
@@ -1322,7 +1866,14 @@ class _MobileControlPageState extends State<MobileControlPage> {
     await Get.delete<FFI>(tag: 'mobile-inline-$key');
     setState(() {
       _activeSessions.remove(key);
-      _sessionStatus[key] = 'Disconnected';
+      // Remove from registered list too, so a fresh ANUVADINI_HELLO
+      // from the same phone is accepted and shows the action dialog again.
+      _registeredDevices.removeWhere((d) => _deviceKey(d) == key);
+      // Clear status entirely so the re-registration guard doesn't
+      // treat this as a still-active session.
+      _sessionStatus.remove(key);
+      _pendingPromptKeys.remove(key);
+      if (_maximizedKey == key) _maximizedKey = null;
     });
     if (_activeSessions.isEmpty) _keepAwakeTimer?.cancel();
   }
@@ -1422,7 +1973,9 @@ class _MobileControlPageState extends State<MobileControlPage> {
     }
     try {
       final interfaces = await NetworkInterface.list(
-          includeLoopback: false, type: InternetAddressType.IPv4);
+              includeLoopback: false, type: InternetAddressType.IPv4)
+          .timeout(const Duration(seconds: 3),
+              onTimeout: () => <NetworkInterface>[]);
       final candidates = <String>[];
       for (final iface in interfaces) {
         final name = iface.name.toLowerCase();

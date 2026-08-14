@@ -20,11 +20,21 @@ class ScanPage extends StatefulWidget {
   /// navigating to RemotePage directly. Used by multi-device session mode.
   final void Function(String uri, String? password)? onNostrControlLaptop;
 
+  /// When set, a direct LAN QR ("Control Device") returns the connect target
+  /// via callback instead of navigating directly. Used by multi-device session
+  /// mode so each laptop becomes its own session in the host.
+  final void Function(String uri, String? password)? onLanControl;
+
   /// When set, a direct LAN QR ("Control Device") fires this callback with the
   /// parsed IP/port before connecting, so callers can offer to save the device.
   final Future<void> Function(String ip, int port)? onConnectedDevice;
 
-  const ScanPage({super.key, this.onNostrControlLaptop, this.onConnectedDevice});
+  const ScanPage({
+    super.key,
+    this.onNostrControlLaptop,
+    this.onLanControl,
+    this.onConnectedDevice,
+  });
 
   @override
   State<ScanPage> createState() => _ScanPageState();
@@ -254,10 +264,32 @@ class _ScanPageState extends State<ScanPage> {
           if (action == 'control') {
             // Direct LAN control — the laptop/phone shows its approval popup and the
             // session starts after it is accepted.
+            if (widget.onLanControl != null) {
+              widget.onLanControl!(address, null);
+              if (mounted) Navigator.of(context).pop();
+              return;
+            }
             if (widget.onConnectedDevice != null) {
               await widget.onConnectedDevice!(ip, port);
             }
             if (!mounted) return;
+            if (widget.onConnectedDevice == null &&
+                widget.onNostrControlLaptop == null) {
+              // Standalone scan (Connection/Settings pages): open the laptop in
+              // the multi-session host so more laptops can be added later.
+              DeviceSessionManager.instance.createDevice(
+                id: address,
+                label: ip,
+                password: null,
+                nostrMode: null,
+              );
+              if (mounted) {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const MultiSessionPage()),
+                );
+              }
+              return;
+            }
             connect(context, address);
             return;
           }
@@ -469,14 +501,20 @@ class _ScanPageState extends State<ScanPage> {
       return;
     }
 
-    showToast('Fetching phone offer from Nostr (may take ~45 s)...');
+    showToast('Establishing secure connection…');
+    final slowTimer = Timer(const Duration(seconds: 20), () {
+      showToast('Still connecting… This may take a few moments.',
+          timeout: const Duration(seconds: 6));
+    });
     final offer = await fetchHostOffer(
       deviceId: deviceId,
       pubkey: pubkey,
       onStatus: (diag) {
+        if (slowTimer.isActive) slowTimer.cancel();
         showToast('$diag', timeout: const Duration(seconds: 6));
       },
     );
+    if (slowTimer.isActive) slowTimer.cancel();
     if (offer != null && offer.startsWith('webrtc://')) {
       showToast('Establishing WebRTC connection...');
       final uri = _buildNostrWebRtcUri(deviceId, pubkey, offer);

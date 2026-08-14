@@ -620,12 +620,11 @@ class _MyQrDialogState extends State<_MyQrDialog> {
         });
         return;
       }
+      // Trust freshly enumerated interface IPs. The stored 'local-ip-addr'
+      // option may be stale (written only at startup by set_local_ip), so only
+      // use it when it still matches a current interface; otherwise a reused
+      // DHCP lease would embed an unreachable IP in the QR.
       final rustIp = bind.mainGetOptionSync(key: 'local-ip-addr');
-      if (rustIp.isNotEmpty &&
-          _isUsableLanIp(rustIp) &&
-          !_allIps.contains(rustIp)) {
-        _allIps.insert(0, rustIp);
-      }
       final ip = _selectedIp ??
           (rustIp.isNotEmpty &&
                   _isUsableLanIp(rustIp) &&
@@ -842,28 +841,6 @@ class _MyQrDialogState extends State<_MyQrDialog> {
         const SizedBox(height: 4),
         Text('$_selectedIp:21118',
             style: const TextStyle(fontSize: 10, color: Colors.grey)),
-        if (_allIps.length > 1) ...[
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            alignment: WrapAlignment.center,
-            children: _allIps.map((ip) {
-              final selected = ip == _selectedIp;
-              return ChoiceChip(
-                label: Text(ip, style: const TextStyle(fontSize: 10)),
-                selected: selected,
-                onSelected: (_) {
-                  setState(() {
-                    _selectedIp = ip;
-                    _lanUrl = 'anuvadini://direct-tcp:${ip}_port_21118';
-                  });
-                  _probeListener();
-                },
-              );
-            }).toList(),
-          ),
-        ],
       ],
     );
   }

@@ -145,7 +145,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     await _ffi.invokeMethod("enable_soft_keyboard", true);
     _mobileFocusNode.dispose();
     _physicalFocusNode.dispose();
-    await _ffi.close(closeSession: false);
+    await _ffi.close(closeSession: true);
     _timer?.cancel();
     _iosKeyboardWorkaroundTimer?.cancel();
     _ffi.dialogManager.dismissAll();

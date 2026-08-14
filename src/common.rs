@@ -740,11 +740,12 @@ pub async fn get_nat_type(ms_timeout: u64) -> i32 {
 }
 
 pub fn set_local_ip() {
-    if Config::get_option("local-ip-addr").is_empty() {
-        if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
-            if socket.connect("1.1.1.1:53").is_ok() {
-                if let Ok(local_addr) = socket.local_addr() {
-                    Config::set_option("local-ip-addr".to_owned(), local_addr.ip().to_string());
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("1.1.1.1:53").is_ok() {
+            if let Ok(local_addr) = socket.local_addr() {
+                let ip = local_addr.ip().to_string();
+                if Config::get_option("local-ip-addr") != ip {
+                    Config::set_option("local-ip-addr".to_owned(), ip);
                 }
             }
         }

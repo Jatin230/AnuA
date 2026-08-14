@@ -77,10 +77,10 @@ class DeviceListSheet extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Scan Another Device'),
+                icon: const Icon(Icons.add),
+                label: const Text('Add Another Device'),
                 onPressed: () {
-                  Navigator.of(context).pop('scan');
+                  Navigator.of(context).pop('add');
                 },
               ),
             ),

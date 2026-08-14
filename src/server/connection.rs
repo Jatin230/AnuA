@@ -996,7 +996,11 @@ impl Connection {
         }
         if let Err(err) = conn.try_port_forward_loop(&mut rx_from_cm).await {
             conn.on_close(&err.to_string(), false).await;
-            raii::AuthedConnID::check_remove_session(conn.inner.id(), conn.session_key());
+            raii::AuthedConnID::check_remove_session(
+                conn.inner.id(),
+                conn.session_key(),
+                conn.lr.username.starts_with("direct-tcp:"),
+            );
         }
 
         conn.post_conn_audit(json!({
@@ -1426,6 +1430,12 @@ impl Connection {
             return false;
         }
         self.authorized = true;
+        // Remember LAN sessions so a quick phone re-dial is auto-approved
+        // (no second approval popup). Without this the SESSIONS map only has
+        // entries for password-validated logins.
+        if self.lr.username.starts_with("direct-tcp:") {
+            raii::AuthedConnID::update_or_insert_session(self.session_key(), None, None);
+        }
         let (conn_type, auth_conn_type) = self.get_auth_conn_type();
         self.authed_conn_id = Some(self::raii::AuthedConnID::new(
             self.inner.id(),
@@ -1936,6 +1946,26 @@ impl Connection {
             .lock()
             .unwrap()
             .retain(|_, s| s.last_recv_time.lock().unwrap().elapsed() < SESSION_TIMEOUT);
+        // LAN direct connections are trusted on the local network: the phone
+        // re-dials the same laptop after a brief drop, but it generates a fresh
+        // random `session_id` for every connection attempt (no conn_token is
+        // passed on the LAN path), so the exact session-key lookup below would
+        // never match. Match LAN reconnects by the stable peer_id instead.
+        if self.lr.username.starts_with("direct-tcp:") {
+            let recent = SESSIONS
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(key, s)| {
+                    key.peer_id == self.lr.my_id
+                        && s.last_recv_time.lock().unwrap().elapsed() < SESSION_TIMEOUT
+                });
+            if recent {
+                log::info!("is recent lan session");
+                return true;
+            }
+            return false;
+        }
         let session = SESSIONS
             .lock()
             .unwrap()
@@ -2086,7 +2116,11 @@ impl Connection {
             if let Some(misc::Union::CloseReason(s)) = &misc.union {
                 log::info!("receive close reason: {}", s);
                 self.on_close("Peer close", true).await;
-                raii::AuthedConnID::check_remove_session(self.inner.id(), self.session_key());
+                raii::AuthedConnID::check_remove_session(
+                    self.inner.id(),
+                    self.session_key(),
+                    self.lr.username.starts_with("direct-tcp:"),
+                );
                 return false;
             }
         }
@@ -2238,10 +2272,12 @@ impl Connection {
                 self.send_login_error(crate::client::LOGIN_MSG_OFFLINE)
                     .await;
                 return false;
-            } else if (password::approve_mode() == ApproveMode::Click
-                && !(crate::get_builtin_option(keys::OPTION_ALLOW_LOGON_SCREEN_PASSWORD) == "Y"
-                    && is_logon()))
-                || password::approve_mode() == ApproveMode::Both && !password::has_valid_password()
+            } else if !self.is_recent_session(false)
+                && ((password::approve_mode() == ApproveMode::Click
+                    && !(crate::get_builtin_option(keys::OPTION_ALLOW_LOGON_SCREEN_PASSWORD) == "Y"
+                        && is_logon()))
+                    || password::approve_mode() == ApproveMode::Both
+                        && !password::has_valid_password())
             {
                 self.try_start_cm(lr.my_id, lr.my_name, false);
                 if hbb_common::get_version_number(&lr.version)
@@ -4126,7 +4162,11 @@ impl Connection {
         let mut msg_out = Message::new();
         msg_out.set_misc(misc);
         self.send(msg_out).await;
-        raii::AuthedConnID::check_remove_session(self.inner.id(), self.session_key());
+        raii::AuthedConnID::check_remove_session(
+            self.inner.id(),
+            self.session_key(),
+            self.lr.username.starts_with("direct-tcp:"),
+        );
     }
 
     async fn handle_read_job_init_result(
@@ -5354,10 +5394,18 @@ pub(crate) mod raii {
                 .count()
         }
 
-        pub fn check_remove_session(conn_id: i32, key: SessionKey) {
+        pub fn check_remove_session(conn_id: i32, key: SessionKey, is_lan: bool) {
             let mut lock = SESSIONS.lock().unwrap();
             let contains = lock.contains_key(&key);
             if contains {
+                // Keep LAN sessions in the map after the connection closes: a
+                // quick phone re-dial hits `is_recent_session` within
+                // SESSION_TIMEOUT and skips the approval dialog. The entry is
+                // pruned by the `retain` in is_recent_session once it ages out.
+                if is_lan {
+                    log::info!("keep lan session for reconnect");
+                    return;
+                }
                 // No two remote connections with the same session key, just for ensure.
                 let is_remote = AUTHED_CONNS
                     .lock()

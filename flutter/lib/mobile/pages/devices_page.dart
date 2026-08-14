@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/chat_page.dart';
 import 'package:flutter_hbb/mobile/pages/device_hub_widgets.dart';
 import 'package:flutter_hbb/mobile/pages/home_page.dart';
+import 'package:flutter_hbb/mobile/pages/multi_session_page.dart';
 import 'package:flutter_hbb/mobile/pages/pair_device_page.dart';
 import 'package:flutter_hbb/models/device_model.dart';
 import 'package:provider/provider.dart';
 
 import '../../common.dart';
 import '../../models/chat_model.dart';
+import '../device_session_manager.dart';
 
 class DevicesPage extends StatefulWidget implements PageShape {
   @override
@@ -64,6 +66,24 @@ class _DevicesPageState extends State<DevicesPage> {
     final target = _connectTarget(device);
     if (target.isEmpty) {
       showToast('No connect target for ${device.name}');
+      return;
+    }
+    // LAN direct: open in the multi-session host so several laptops can be
+    // controlled at the same time from one phone.
+    if (!isFileTransfer && target.startsWith('direct-tcp:')) {
+      await gFFI.deviceModel.touchLastConnected(device.remoteId,
+          lanIp: lanIpFromDirectTcp(target));
+      DeviceSessionManager.instance.createDevice(
+        id: target,
+        label: device.name,
+        password: device.password.isEmpty ? null : device.password,
+        nostrMode: null,
+      );
+      if (mounted) {
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => const MultiSessionPage(),
+        ));
+      }
       return;
     }
     // LAN direct first, fall back to the remote id / Nostr path only when the

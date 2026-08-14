@@ -55,6 +55,10 @@ class Device {
 
   bool pinned;
 
+  /// Saved password used for automatic reconnects without re-approval when the
+  /// laptop has password-based access enabled.
+  String password;
+
   Device({
     required this.remoteId,
     required this.name,
@@ -62,6 +66,7 @@ class Device {
     this.platform = DevicePlatform.unknown,
     this.lastConnected = 0,
     this.pinned = false,
+    this.password = '',
   });
 
   Device copyWith({
@@ -71,6 +76,7 @@ class Device {
     DevicePlatform? platform,
     int? lastConnected,
     bool? pinned,
+    String? password,
   }) {
     return Device(
       remoteId: remoteId ?? this.remoteId,
@@ -79,6 +85,7 @@ class Device {
       platform: platform ?? this.platform,
       lastConnected: lastConnected ?? this.lastConnected,
       pinned: pinned ?? this.pinned,
+      password: password ?? this.password,
     );
   }
 
@@ -88,7 +95,8 @@ class Device {
         lanIp = (json['lanIp'] ?? json['ip'] ?? '').toString(),
         platform = devicePlatformFromString(json['platform']?.toString()),
         lastConnected = (json['lastConnected'] as num?)?.toInt() ?? 0,
-        pinned = json['pinned'] == true;
+        pinned = json['pinned'] == true,
+        password = (json['password'] ?? '').toString();
 
   Map<String, dynamic> toJson() => {
         'remoteId': remoteId,
@@ -97,6 +105,7 @@ class Device {
         'platform': platform.name,
         'lastConnected': lastConnected,
         'pinned': pinned,
+        'password': password,
       };
 }
 

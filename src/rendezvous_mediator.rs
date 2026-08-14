@@ -902,6 +902,8 @@ async fn handle_anuvadini_command(mut stream: tokio::net::TcpStream, addr: Socke
         handle_mobile_registration(stream, addr, &msg).await;
     } else if msg.starts_with("ANUVADINI_CONTROL") {
         handle_control_request(stream, addr, &msg).await;
+    } else if msg.starts_with("ANUVADINI_AUTH") {
+        handle_auth_request(stream, addr).await;
     } else {
         log::warn!(
             "Unknown ANUVADINI command from {}: {}",
@@ -1002,6 +1004,41 @@ async fn handle_control_request(
     // Acknowledge the laptop so it knows the phone received the request.
     let _ = hbb_common::timeout(2000, stream.write_all(b"ANUVADINI_ACK\n")).await;
     let _ = stream.flush().await;
+}
+
+/// Handle a laptop → phone "give me a temp password to log in" request.
+/// The laptop connects to this device over LAN (manual IP) and wants to
+/// auto-authorize without an approval popup. We reply with our own
+/// temporary password so the laptop's `direct-tcp:` login is accepted.
+async fn handle_auth_request(mut stream: tokio::net::TcpStream, addr: SocketAddr) {
+    log::info!("Match! Processing ANUVADINI_AUTH request...");
+    // Format: ANUVADINI_AUTH
+    // Reply: ANUVADINI_ACK:<temp_password>\n
+    let mut password = String::new();
+    #[cfg(feature = "flutter")]
+    {
+        let pwd = crate::flutter_ffi::main_get_temporary_password();
+        if !pwd.is_empty() {
+            password = pwd;
+        } else {
+            let pwd = crate::flutter_ffi::main_get_permanent_password();
+            if !pwd.is_empty() {
+                password = pwd;
+            }
+        }
+    }
+    let reply = if password.is_empty() {
+        "ANUVADINI_ACK:\n".to_owned()
+    } else {
+        format!("ANUVADINI_ACK:{}\n", password)
+    };
+    let _ = hbb_common::timeout(2000, stream.write_all(reply.as_bytes())).await;
+    let _ = stream.flush().await;
+    log::info!(
+        "Auth request from {} answered (password {}).",
+        addr,
+        if password.is_empty() { "unavailable" } else { "provided" }
+    );
 }
 
 enum Sink<'a> {

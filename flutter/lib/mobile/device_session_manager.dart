@@ -23,11 +23,13 @@ class DeviceSessionManager extends ChangeNotifier {
     required String id,
     required String label,
     String? password,
+    bool? isSharedPassword,
+    bool? forceRelay,
     String? nostrMode,
   }) {
     final device = _devices.values.firstWhere(
       (d) => d.id == id,
-      orElse: () => _createNewDevice(id: id, label: label, password: password, nostrMode: nostrMode),
+      orElse: () => _createNewDevice(id: id, label: label, password: password, isSharedPassword: isSharedPassword, forceRelay: forceRelay, nostrMode: nostrMode),
     );
     activate(device.sessionId.toString());
     return device;
@@ -37,6 +39,8 @@ class DeviceSessionManager extends ChangeNotifier {
     required String id,
     required String label,
     String? password,
+    bool? isSharedPassword,
+    bool? forceRelay,
     String? nostrMode,
   }) {
     final sessionId = Uuid().v4obj();
@@ -47,6 +51,8 @@ class DeviceSessionManager extends ChangeNotifier {
       sessionId: sessionId,
       ffi: ffi,
       password: password,
+      isSharedPassword: isSharedPassword,
+      forceRelay: forceRelay,
       nostrMode: nostrMode,
     );
     _devices[sessionId.toString()] = device;

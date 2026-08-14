@@ -15,6 +15,8 @@ class Device {
   final SessionID sessionId;
   final FFI ffi;
   final String? password;
+  final bool? isSharedPassword;
+  final bool? forceRelay;
   final String? nostrMode;
   DeviceState state;
   String? errorMessage;
@@ -25,6 +27,8 @@ class Device {
     required this.sessionId,
     required this.ffi,
     this.password,
+    this.isSharedPassword,
+    this.forceRelay,
     this.nostrMode,
     this.state = DeviceState.connecting,
     this.errorMessage,

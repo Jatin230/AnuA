@@ -35,6 +35,8 @@ import 'mobile/pages/file_manager_page.dart';
 import 'mobile/pages/remote_page.dart';
 import 'mobile/pages/view_camera_page.dart';
 import 'mobile/pages/terminal_page.dart';
+import 'mobile/pages/multi_session_page.dart';
+import 'mobile/device_session_manager.dart';
 import 'desktop/pages/remote_page.dart' as desktop_remote;
 import 'desktop/pages/file_manager_page.dart' as desktop_file_manager;
 import 'desktop/pages/view_camera_page.dart' as desktop_view_camera;
@@ -2660,16 +2662,19 @@ connect(BuildContext context, String id,
           ),
         );
       } else {
-        showToast('Navigating to RemotePage (id.length=${id.length})...');
+        showToast('Navigating to MultiSessionPage (id.length=${id.length})...');
+        DeviceSessionManager.instance.createDevice(
+          id: id,
+          label: id,
+          password: password,
+          isSharedPassword: isSharedPassword,
+          forceRelay: forceRelay,
+          nostrMode: nostrMode,
+        );
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (BuildContext context) => RemotePage(
-                id: id,
-                password: password,
-                isSharedPassword: isSharedPassword,
-                forceRelay: forceRelay,
-                nostrMode: nostrMode),
+            builder: (BuildContext context) => const MultiSessionPage(),
           ),
         );
       }
