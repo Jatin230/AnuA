@@ -393,7 +393,7 @@ class _ScanPageState extends State<ScanPage> {
           if (mounted) Navigator.of(context).pop();
           return;
         }
-        showToast('Fetching host offer from Nostr (may take ~45 s)...');
+        showToast('Looking up your device...');
         final offer = await fetchHostOffer(
           deviceId: deviceId,
           pubkey: pubkey,
@@ -418,7 +418,7 @@ class _ScanPageState extends State<ScanPage> {
       if (embeddedOffer != null) {
         finalUri = _buildNostrWebRtcUri(deviceId, pubkey, embeddedOffer);
       } else {
-        showToast('Fetching host offer from Nostr (may take ~45 s)...');
+        showToast('Connecting securely to your laptop...');
         final offer = await fetchHostOffer(
           deviceId: deviceId,
           pubkey: pubkey,

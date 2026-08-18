@@ -355,7 +355,7 @@ class _ConnectionPageState extends State<ConnectionPage>
 
     setState(() => _nostrConnecting = true);
     try {
-      showToast('Looking up device $deviceId on Nostr...');
+      showToast('Finding your device...');
       final result = await lookupDeviceById(deviceId);
       if (result == null) {
         if (mounted) {

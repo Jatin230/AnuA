@@ -165,7 +165,7 @@ pub fn is_support_file_copy_paste_num(ver: i64) -> bool {
 }
 
 pub fn is_support_remote_print(ver: &str) -> bool {
-    hbb_common::get_version_number(ver) >= hbb_common::get_version_number("1.3.9")
+    hbb_common::get_version_number(ver) >= hbb_common::get_version_number("1.3.0")
 }
 
 pub fn is_support_file_paste_if_macos(ver: &str) -> bool {

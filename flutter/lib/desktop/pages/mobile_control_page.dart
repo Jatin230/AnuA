@@ -877,9 +877,6 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
               if (_loading) const CircularProgressIndicator(),
               if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
               
-              // DEBUG INFO FOR JATIN:
-              Text('DEBUG: loading=$_loading, error=$_error, url=${_connectionUrl?.substring(0, 30) ?? 'null'}, ips=${_allLocalIps.length}', style: TextStyle(fontSize: 8, color: Colors.blue)),
-              
               if (_connectionUrl != null) ...[
                 QrImageView(
                   data: _connectionUrl!,
@@ -925,9 +922,6 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
                 ),
               ],
             ] else ...[
-              // DEBUG INFO FOR JATIN (NOSTR):
-              Text('DEBUG: nostrLoading=$_nostrLoading, error=$_nostrError, requested=$_nostrRequested, uri=${_nostrUri?.substring(0, 30) ?? 'null'}', style: TextStyle(fontSize: 8, color: Colors.blue)),
-              
               if (_nostrLoading)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),
@@ -1263,249 +1257,33 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
   String _deviceKey(Map<String, String> device) => device['id'] ?? device['ip'] ?? '';
 
   /// Grey screen placeholder with a phone-to-phone style toolbar overlay.
-  /// The toolbar sits on the left (like the phone-to-phone bottom bar) and the
-  /// bolt/mobile-actions button sits on the right of the grey area. A
-  /// minimize/maximize toggle is placed at the top-right corner of the screen.
+  /// Toolbar is pinned to the bottom of the stream container.
+  /// The bolt (⚡) button opens an action panel INSIDE this Stack so it never
+  /// spills outside the placeholder boundary.
   Widget _buildStreamOverlay(
       Map<String, String> device, String key, FFI? ffi) {
     final isMaximized = _maximizedKey == key;
-    return Container(
-      decoration: BoxDecoration(
-          color: const Color(0xFF212121),
-          borderRadius: BorderRadius.circular(8)),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          ffi != null
-              ? InlineStreamPanel(deviceKey: key, ffi: ffi)
-              : const Center(
-                  child: Text('Not Connected',
-                      style: TextStyle(color: Colors.white70))),
-          Positioned(
-            top: 4,
-            right: 4,
-            child: IconButton(
-              icon: Icon(
-                  isMaximized ? Icons.close_fullscreen : Icons.open_in_full,
-                  color: Colors.white70,
-                  size: 18),
-              tooltip: isMaximized ? 'Minimize' : 'Maximize',
-              onPressed: () => setState(
-                  () => _maximizedKey = isMaximized ? null : key),
-            ),
-          ),
-          Positioned(
-            left: 8,
-            right: 8,
-            bottom: 8,
-            child: _buildInlineToolbar(device, key, ffi),
-          ),
-        ],
-      ),
+    return _StreamOverlayWithActions(
+      key: ValueKey('soa_$key'),
+      device: device,
+      deviceKey: key,
+      ffi: ffi,
+      isMaximized: isMaximized,
+      onToggleMaximize: () =>
+          setState(() => _maximizedKey = isMaximized ? null : key),
+      onDisconnect: () => _disconnectDevice(device),
+      onOptions: ffi != null ? () => _showInlineOptions(ffi, key) : null,
+      onKeyboard: ffi != null ? () => _openInlineKeyboard(ffi) : null,
+      onTouchMode: ffi != null ? () => _toggleInlineTouchMode(ffi) : null,
+      onChat: ffi != null ? () => _openInlineChat(ffi) : null,
+      onMore: ffi != null ? () => _showInlineMore(ffi, key) : null,
     );
   }
 
-  /// Phone-to-phone style toolbar: left cluster of controls, bolt actions on
-  /// the right. Buttons are disabled when there is no active session.
-  Widget _buildInlineToolbar(
-      Map<String, String> device, String key, FFI? ffi) {
-    final connected = ffi != null;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.55),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              _toolbarActionButton(
-                icon: const Icon(Icons.power_settings_new_rounded),
-                tooltip: 'Disconnect',
-                accentColor: Colors.redAccent,
-                onPressed: connected
-                    ? () => _disconnectDevice(device)
-                    : null,
-              ),
-              _toolbarActionButton(
-                icon: const Icon(Icons.tune_rounded),
-                tooltip: 'Options',
-                onPressed:
-                    connected ? () => _showInlineOptions(ffi, key) : null,
-              ),
-              _toolbarActionButton(
-                icon: const Icon(Icons.keyboard_alt_outlined),
-                tooltip: 'Keyboard',
-                onPressed:
-                    connected ? () => _openInlineKeyboard(ffi) : null,
-              ),
-              _toolbarActionButton(
-                icon: const Icon(Icons.touch_app_rounded),
-                tooltip: 'Touch / Mouse',
-                onPressed: connected
-                    ? () => _toggleInlineTouchMode(ffi)
-                    : null,
-              ),
-              _toolbarActionButton(
-                icon: const Icon(Icons.forum_rounded),
-                tooltip: 'Chat',
-                accentColor: const Color(0xFF14B8A6),
-                onPressed: connected ? () => _openInlineChat(ffi) : null,
-              ),
-              _toolbarActionButton(
-                icon: const Icon(Icons.more_horiz_rounded),
-                tooltip: 'More',
-                accentColor: const Color(0xFF6366F1),
-                onPressed: connected ? () => _showInlineMore(ffi, key) : null,
-              ),
-            ],
-          ),
-          Row(
-            children: [
-              _navActionButton(
-                icon: const Icon(Icons.arrow_back_rounded),
-                tooltip: 'Back',
-                accentColor: const Color(0xFF14B8A6),
-                onPressed: connected ? () => ffi.inputModel.onMobileBack() : null,
-              ),
-              _navActionButton(
-                icon: const Icon(Icons.space_dashboard_rounded),
-                tooltip: 'Home',
-                accentColor: const Color(0xFF14B8A6),
-                onPressed: connected ? () => ffi.inputModel.onMobileHome() : null,
-              ),
-              _navActionButton(
-                icon: const Icon(Icons.apps_rounded),
-                tooltip: 'Apps',
-                accentColor: const Color(0xFF14B8A6),
-                onPressed: connected ? () => ffi.inputModel.onMobileApps() : null,
-              ),
-              _navActionButton(
-                icon: const Icon(Icons.volume_down_rounded),
-                tooltip: 'Volume down',
-                accentColor: const Color(0xFF14B8A6),
-                onPressed: connected
-                    ? () => ffi.inputModel.onMobileVolumeDown()
-                    : null,
-              ),
-              _navActionButton(
-                icon: const Icon(Icons.volume_up_rounded),
-                tooltip: 'Volume up',
-                accentColor: const Color(0xFF14B8A6),
-                onPressed: connected
-                    ? () => ffi.inputModel.onMobileVolumeUp()
-                    : null,
-              ),
-              _toolbarActionButton(
-                icon: const Icon(Icons.bolt_rounded),
-                tooltip: 'Actions',
-                accentColor: const Color(0xFF0EA5E9),
-                onPressed: connected
-                    ? () => _toggleInlineMobileActions(ffi)
-                    : null,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+  // _buildInlineToolbar is now handled inside _StreamOverlayWithActions.
 
-  Widget _toolbarActionButton({
-    required Widget icon,
-    required String tooltip,
-    VoidCallback? onPressed,
-    bool active = false,
-    Color? accentColor,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    final accent = accentColor ?? scheme.primary;
-    final enabled = onPressed != null;
-    final backgroundColor = !enabled
-        ? scheme.surface.withOpacity(0.45)
-        : active
-            ? accent.withOpacity(0.2)
-            : scheme.surface.withOpacity(0.82);
-    final borderColor = !enabled
-        ? scheme.onSurface.withOpacity(0.12)
-        : active
-            ? accent.withOpacity(0.75)
-            : scheme.onSurface.withOpacity(0.16);
-
-    return Tooltip(
-      message: tooltip,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 2),
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: borderColor),
-        ),
-        child: IconTheme(
-          data: IconThemeData(
-            color: !enabled
-                ? scheme.onSurface.withOpacity(0.35)
-                : active
-                    ? accent
-                    : scheme.onSurface.withOpacity(0.84),
-            size: 18,
-          ),
-          child: IconButton(
-            constraints:
-                const BoxConstraints.tightFor(width: 36, height: 36),
-            padding: EdgeInsets.zero,
-            splashRadius: 18,
-            iconSize: 18,
-            onPressed: onPressed,
-            icon: icon,
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Compact variant of [_toolbarActionButton] used by the persistent
-  /// phone navigation cluster (back/home/apps/volume) pinned to the bottom
-  /// of the stream overlay.
-  Widget _navActionButton({
-    required Widget icon,
-    required String tooltip,
-    VoidCallback? onPressed,
-    Color? accentColor,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-    final accent = accentColor ?? scheme.primary;
-    final enabled = onPressed != null;
-    return Tooltip(
-      message: tooltip,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 1),
-        decoration: BoxDecoration(
-          color: enabled
-              ? accent.withOpacity(0.92)
-              : scheme.surface.withOpacity(0.45),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: IconTheme(
-          data: IconThemeData(
-            color: enabled ? Colors.white : scheme.onSurface.withOpacity(0.35),
-            size: 17,
-          ),
-          child: IconButton(
-            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-            padding: EdgeInsets.zero,
-            splashRadius: 15,
-            iconSize: 17,
-            onPressed: onPressed,
-            icon: icon,
-          ),
-        ),
-      ),
-    );
-  }
+  // _toolbarActionButton and _navActionButton are now static helpers
+  // inside _StreamOverlayWithActions (see below).
 
   void _openInlineKeyboard(FFI ffi) {
     try {
@@ -1559,51 +1337,8 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
     }
   }
 
-  void _toggleInlineMobileActions(FFI ffi) {
-    try {
-      if (_mobileActionsEntry != null) {
-        _mobileActionsEntry!.remove();
-        _mobileActionsEntry = null;
-        showToast('Hiding phone actions');
-        setState(() {});
-        return;
-      }
-      final overlayState = widget.overlayKeyState.state;
-      if (overlayState == null) {
-        showToast('Actions: overlay not ready');
-        return;
-      }
-      const double overlayW = 45;
-      const double overlayH = 200;
-      double scale = 1.0;
-      if (draggablePositions.mobileActions.isInvalid()) {
-        draggablePositions.mobileActions.update(Offset(
-            20,
-            (MediaQuery.of(context).size.height - overlayH * scale) / 2));
-      } else {
-        draggablePositions.mobileActions
-            .tryAdjust(overlayW, overlayH, scale);
-      }
-      final entry = OverlayEntry(builder: (context) {
-        return DraggableMobileActions(
-          scale: scale,
-          position: draggablePositions.mobileActions,
-          width: overlayW,
-          height: overlayH,
-          onBackPressed: ffi.inputModel.onMobileBack,
-          onHomePressed: ffi.inputModel.onMobileHome,
-          onRecentPressed: ffi.inputModel.onMobileApps,
-          onHidePressed: () => _toggleInlineMobileActions(ffi),
-        );
-      });
-      overlayState.insert(entry);
-      _mobileActionsEntry = entry;
-      showToast('Showing phone actions');
-      setState(() {});
-    } catch (e) {
-      showToast('Actions: $e');
-    }
-  }
+  // _toggleInlineMobileActions is now handled inside _StreamOverlayWithActions.
+  // The _mobileActionsEntry field is kept for backward compatibility but unused.
 
   List<TTextMenu> _inlineMobileActionMenus(FFI ffi) {
     if (ffi.ffiModel.pi.platform != kPeerPlatformAndroid ||
@@ -2303,6 +2038,340 @@ class _InlineStreamPanelState extends State<InlineStreamPanel> {
           ),
         );
       },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// _StreamOverlayWithActions
+// ---------------------------------------------------------------------------
+// Self-contained widget that wraps [InlineStreamPanel] and owns:
+//   • the dark background container
+//   • the maximize toggle (top-right)
+//   • the bolt-style action toolbar (bottom, INSIDE the container)
+//   • the inline action pop-up (Back / Home / Apps / Volume) shown when the
+//     user taps ⚡ — rendered as a local Stack overlay so it is always
+//     clipped to the stream placeholder boundary and never floats over the
+//     rest of the desktop UI.
+// ---------------------------------------------------------------------------
+class _StreamOverlayWithActions extends StatefulWidget {
+  final Map<String, String> device;
+  final String deviceKey;
+  final FFI? ffi;
+  final bool isMaximized;
+  final VoidCallback onToggleMaximize;
+  final VoidCallback onDisconnect;
+  final VoidCallback? onOptions;
+  final VoidCallback? onKeyboard;
+  final VoidCallback? onTouchMode;
+  final VoidCallback? onChat;
+  final VoidCallback? onMore;
+
+  const _StreamOverlayWithActions({
+    super.key,
+    required this.device,
+    required this.deviceKey,
+    required this.ffi,
+    required this.isMaximized,
+    required this.onToggleMaximize,
+    required this.onDisconnect,
+    this.onOptions,
+    this.onKeyboard,
+    this.onTouchMode,
+    this.onChat,
+    this.onMore,
+  });
+
+  @override
+  State<_StreamOverlayWithActions> createState() =>
+      _StreamOverlayWithActionsState();
+}
+
+class _StreamOverlayWithActionsState
+    extends State<_StreamOverlayWithActions> {
+  bool _actionsOpen = false;
+  bool _toolbarVisible = false;
+  Timer? _hideTimer;
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    super.dispose();
+  }
+
+  void _showToolbar() {
+    _hideTimer?.cancel();
+    if (!_toolbarVisible) setState(() => _toolbarVisible = true);
+    _hideTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted && !_actionsOpen) setState(() => _toolbarVisible = false);
+    });
+  }
+
+  void _keepToolbarVisible() {
+    _hideTimer?.cancel();
+    if (!_toolbarVisible) setState(() => _toolbarVisible = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ffi = widget.ffi;
+    final connected = ffi != null;
+
+    return MouseRegion(
+      onEnter: (_) => _showToolbar(),
+      onHover: (_) => _showToolbar(),
+      onExit: (_) {
+        _hideTimer?.cancel();
+        if (!_actionsOpen) setState(() => _toolbarVisible = false);
+      },
+      child: Container(
+        decoration: BoxDecoration(
+            color: const Color(0xFF212121),
+            borderRadius: BorderRadius.circular(8)),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // ── Stream / placeholder ────────────────────────────────────────
+            connected
+                ? InlineStreamPanel(deviceKey: widget.deviceKey, ffi: ffi)
+                : const Center(
+                    child: Text('Not Connected',
+                        style: TextStyle(color: Colors.white70))),
+
+            // ── All controls fade in/out on hover ───────────────────────────
+            AnimatedOpacity(
+              opacity: _toolbarVisible ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              // IgnorePointer when hidden so invisible buttons can't be clicked
+              child: IgnorePointer(
+                ignoring: !_toolbarVisible,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Maximize toggle
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: IconButton(
+                        icon: Icon(
+                            widget.isMaximized
+                                ? Icons.close_fullscreen
+                                : Icons.open_in_full,
+                            color: Colors.white70,
+                            size: 18),
+                        tooltip:
+                            widget.isMaximized ? 'Minimize' : 'Maximize',
+                        onPressed: widget.onToggleMaximize,
+                      ),
+                    ),
+
+                    // Bolt action panel
+                    if (_actionsOpen && connected)
+                      Positioned(
+                        bottom: 60,
+                        right: 8,
+                        child: MouseRegion(
+                          onEnter: (_) => _keepToolbarVisible(),
+                          child: _BoltActionPanel(
+                            ffi: ffi,
+                            onClose: () => setState(() {
+                              _actionsOpen = false;
+                              _showToolbar();
+                            }),
+                          ),
+                        ),
+                      ),
+
+                    // Toolbar
+                    Positioned(
+                      left: 8,
+                      right: 8,
+                      bottom: 8,
+                      child: MouseRegion(
+                        onEnter: (_) => _keepToolbarVisible(),
+                        child: _buildToolbar(connected, ffi),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToolbar(bool connected, FFI? ffi) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        // Left cluster: functional controls (no container background)
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _btn(
+              icon: Icons.power_settings_new_rounded,
+              tooltip: 'Disconnect',
+              accent: Colors.redAccent,
+              onPressed: connected ? widget.onDisconnect : null,
+            ),
+            _btn(
+              icon: Icons.tune_rounded,
+              tooltip: 'Options',
+              onPressed: connected ? widget.onOptions : null,
+            ),
+            _btn(
+              icon: Icons.touch_app_rounded,
+              tooltip: 'Touch / Mouse',
+              onPressed: connected ? widget.onTouchMode : null,
+            ),
+            _btn(
+              icon: Icons.more_horiz_rounded,
+              tooltip: 'More',
+              accent: const Color(0xFF6366F1),
+              onPressed: connected ? widget.onMore : null,
+            ),
+          ],
+        ),
+        // Right: bolt (⚡) — toggles the inline action panel
+        _btn(
+            icon: Icons.bolt_rounded,
+            tooltip: _actionsOpen ? 'Hide actions' : 'Phone actions',
+            accent: const Color(0xFF0EA5E9),
+            active: _actionsOpen,
+            onPressed: connected
+                ? () => setState(() => _actionsOpen = !_actionsOpen)
+                : null,
+        ),
+      ],
+    );
+  }
+
+  /// Compact pill-style icon button used throughout the toolbar.
+  Widget _btn({
+    required IconData icon,
+    required String tooltip,
+    VoidCallback? onPressed,
+    bool active = false,
+    Color? accent,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final accentColor = accent ?? scheme.primary;
+    final enabled = onPressed != null;
+
+    final bg = !enabled
+        ? scheme.surface.withOpacity(0.40)
+        : active
+            ? accentColor.withOpacity(0.22)
+            : scheme.surface.withOpacity(0.82);
+    final border = !enabled
+        ? scheme.onSurface.withOpacity(0.10)
+        : active
+            ? accentColor.withOpacity(0.80)
+            : scheme.onSurface.withOpacity(0.16);
+    final iconColor = !enabled
+        ? scheme.onSurface.withOpacity(0.32)
+        : active
+            ? accentColor
+            : scheme.onSurface.withOpacity(0.84);
+
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 2),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: border),
+        ),
+        child: IconButton(
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+          padding: EdgeInsets.zero,
+          splashRadius: 18,
+          iconSize: 18,
+          color: iconColor,
+          onPressed: onPressed,
+          icon: Icon(icon, size: 18),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// _BoltActionPanel
+// ---------------------------------------------------------------------------
+// Compact card that appears INSIDE the stream placeholder when the user taps
+// the ⚡ bolt button. Contains Back / Home / Apps / Volume controls so they
+// are visually contained within the phone stream area.
+// ---------------------------------------------------------------------------
+class _BoltActionPanel extends StatelessWidget {
+  final FFI ffi;
+  final VoidCallback onClose;
+
+  const _BoltActionPanel({required this.ffi, required this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xE6151515),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white12),
+          boxShadow: const [
+            BoxShadow(color: Colors.black54, blurRadius: 12, offset: Offset(0, 4)),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Close handle
+            GestureDetector(
+              onTap: onClose,
+              child: const Icon(Icons.keyboard_arrow_down_rounded,
+                  color: Colors.white38, size: 20),
+            ),
+            const SizedBox(height: 4),
+            _actionBtn(context, Icons.arrow_back_rounded, 'Back',
+                ffi.inputModel.onMobileBack),
+            _actionBtn(context, Icons.circle_outlined, 'Home',
+                ffi.inputModel.onMobileHome),
+            _actionBtn(context, Icons.apps_rounded, 'Apps',
+                ffi.inputModel.onMobileApps),
+            _actionBtn(context, Icons.volume_up_rounded, 'Vol +',
+                ffi.inputModel.onMobileVolumeUp),
+            _actionBtn(context, Icons.volume_down_rounded, 'Vol -',
+                ffi.inputModel.onMobileVolumeDown),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _actionBtn(BuildContext context, IconData icon, String label,
+      VoidCallback onPressed) {
+    return Tooltip(
+      message: label,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 40,
+          height: 40,
+          margin: const EdgeInsets.symmetric(vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.07),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: Colors.white70, size: 20),
+        ),
+      ),
     );
   }
 }
