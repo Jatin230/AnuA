@@ -115,7 +115,7 @@ class _ScanPageState extends State<ScanPage> {
         controller.pauseCamera();
         showServerSettingFromQr(scanData.code!).then((_) {}).catchError((e) {
           print('showServerSettingFromQr error: $e');
-          showToast('Error: $e');
+          showToast('Invalid QR code');
         });
       }
     });
@@ -327,7 +327,7 @@ class _ScanPageState extends State<ScanPage> {
       final pubkey = _parseNostrPubkey(data);
       final password = _parseNostrPassword(data);
       if (deviceId.isEmpty) {
-        showToast('Invalid Nostr WebRTC QR');
+        showToast('Invalid QR code');
         controller?.resumeCamera();
         return;
       }
@@ -397,8 +397,9 @@ class _ScanPageState extends State<ScanPage> {
         final offer = await fetchHostOffer(
           deviceId: deviceId,
           pubkey: pubkey,
-          onStatus: (diag) {
-            showToast('$diag', timeout: const Duration(seconds: 6));
+          onStatus: (_) {
+            showToast('Looking up your device...',
+                timeout: const Duration(seconds: 6));
           },
         );
         if (offer != null && offer.startsWith('webrtc://')) {
@@ -407,7 +408,7 @@ class _ScanPageState extends State<ScanPage> {
           if (mounted) Navigator.of(context).pop();
           return;
         }
-        showToast('Failed to fetch host offer');
+        showToast("Couldn't connect to your device. Please try again.");
         if (mounted) Navigator.of(context).pop();
         return;
       }
@@ -422,22 +423,23 @@ class _ScanPageState extends State<ScanPage> {
         final offer = await fetchHostOffer(
           deviceId: deviceId,
           pubkey: pubkey,
-          onStatus: (diag) {
-            showToast('$diag', timeout: const Duration(seconds: 6));
+          onStatus: (_) {
+            showToast('Looking up your device...',
+                timeout: const Duration(seconds: 6));
           },
         );
         if (offer != null && offer.startsWith('webrtc://')) {
-          showToast('Establishing WebRTC connection...');
+          showToast('Connecting...');
           finalUri = _buildNostrWebRtcUri(deviceId, pubkey, offer);
         } else {
-          final diag = getNostrDiagnosticsSummary();
           if (!mounted) return;
           await showDialog(
             context: context,
             barrierDismissible: true,
             builder: (ctx) => AlertDialog(
-              title: const Text('Nostr Offer Not Found'),
-              content: SingleChildScrollView(child: Text(diag)),
+              title: const Text("Couldn't Connect"),
+              content: const Text(
+                  "We couldn't reach your device. Make sure it's online and try again."),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(ctx),
@@ -509,14 +511,15 @@ class _ScanPageState extends State<ScanPage> {
     final offer = await fetchHostOffer(
       deviceId: deviceId,
       pubkey: pubkey,
-      onStatus: (diag) {
+      onStatus: (_) {
         if (slowTimer.isActive) slowTimer.cancel();
-        showToast('$diag', timeout: const Duration(seconds: 6));
+        showToast('Looking up your device...',
+            timeout: const Duration(seconds: 6));
       },
     );
     if (slowTimer.isActive) slowTimer.cancel();
     if (offer != null && offer.startsWith('webrtc://')) {
-      showToast('Establishing WebRTC connection...');
+      showToast('Connecting...');
       final uri = _buildNostrWebRtcUri(deviceId, pubkey, offer);
       final label = Uri.tryParse(uri)?.host ?? deviceId;
       DeviceSessionManager.instance.createDevice(
@@ -532,14 +535,14 @@ class _ScanPageState extends State<ScanPage> {
       }
       return;
     }
-    final diag = getNostrDiagnosticsSummary();
     if (!mounted) return;
     await showDialog(
       context: context,
       barrierDismissible: true,
       builder: (ctx) => AlertDialog(
-        title: const Text('Phone Offer Not Found'),
-        content: SingleChildScrollView(child: Text(diag)),
+        title: const Text("Couldn't Connect"),
+        content: const Text(
+            "We couldn't reach your device. Make sure it's online and try again."),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -564,7 +567,7 @@ class _ScanPageState extends State<ScanPage> {
     try {
       await gFFI.serverModel.startService();
     } catch (e) {
-      showToast('Failed to start phone screen sharing: $e');
+      showToast("Couldn't start screen sharing. Please try again.");
       controller?.resumeCamera();
       return;
     }
@@ -594,7 +597,7 @@ class _ScanPageState extends State<ScanPage> {
     } catch (e) {
       platformFFI.unregisterEventHandler('on_nostr_webrtc_offer_ready', '_scan_phone_host_offer');
       platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_scan_phone_host_err');
-      showToast('Failed to start phone host: $e');
+      showToast("Couldn't start the connection. Please try again.");
       controller?.resumeCamera();
       return;
     }
@@ -608,12 +611,12 @@ class _ScanPageState extends State<ScanPage> {
     platformFFI.unregisterEventHandler('on_nostr_webrtc_error', '_scan_phone_host_err');
 
     if (phoneOfferUri == null || phoneOfferUri.isEmpty) {
-      showToast('Failed to generate phone WebRTC offer. Please try again.');
+      showToast("Couldn't connect. Please try again.");
       controller?.resumeCamera();
       return;
     }
 
-    showToast('Publishing phone to laptop via Nostr...');
+    showToast('Notifying your laptop...');
     try {
       print('P7: _handleNostrControlPhone: about to call publishNostrRegistration');
       await bind.publishNostrRegistration(
@@ -623,7 +626,7 @@ class _ScanPageState extends State<ScanPage> {
       print('P8: _handleNostrControlPhone: publishNostrRegistration returned');
       showToast('Done! Check the laptop — it should prompt you to control this phone.');
     } catch (e) {
-      showToast('Failed to notify laptop: $e');
+      showToast("Couldn't notify your laptop. Please try again.");
       controller?.resumeCamera();
     }
   }
@@ -688,7 +691,7 @@ class _ScanPageState extends State<ScanPage> {
         showToast('Connected to laptop (no ACK received)');
       }
     } catch (e) {
-      showToast('Failed to connect: $e');
+      showToast("Couldn't connect. Please try again.");
       controller?.resumeCamera();
     }
   }
@@ -703,7 +706,7 @@ class _ScanPageState extends State<ScanPage> {
       try {
         await gFFI.serverModel.startService();
       } catch (e) {
-        showToast('Failed to start phone screen sharing: $e');
+        showToast("Couldn't start screen sharing. Please try again.");
         controller?.resumeCamera();
         return;
       }
@@ -756,7 +759,7 @@ class _ScanPageState extends State<ScanPage> {
         showToast('Control request sent over LAN (no ACK)');
       }
     } catch (e) {
-      showToast('Failed to send LAN control request: $e');
+      showToast("Couldn't send the request. Please try again.");
       controller?.resumeCamera();
     }
   }

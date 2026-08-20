@@ -138,7 +138,7 @@ dependency_overrides:
 
 # rerun: flutter pub run flutter_launcher_icons
 flutter_icons:
-  image_path: "../res/icon.png"
+  image_path: "assets/icon.png"
   remove_alpha_ios: true
   android: true
   ios: true
@@ -212,12 +212,12 @@ flutter:
   # see https://flutter.dev/custom-fonts/#from-packages
 
 flutter_launcher_icons:
-  image_path: "C:\\Users\\jatin\\Downloads\\97af715ab6a3414a5586695e213784f67e1e0ed5-C4o249Za.png"
+  image_path: "assets/icon.png"
   android: true
   ios: true
   windows:
     generate: true
-    icon_path: "C:\\Users\\jatin\\Downloads\\97af715ab6a3414a5586695e213784f67e1e0ed5-C4o249Za.png"
+    icon_path: "assets/icon.png"
   macos:
     generate: true
-    icon_path: "C:\\Users\\jatin\\Downloads\\97af715ab6a3414a5586695e213784f67e1e0ed5-C4o249Za.png"
+    icon_path: "assets/icon.png"

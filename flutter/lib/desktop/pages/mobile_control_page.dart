@@ -27,6 +27,7 @@ import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter_hbb/debug_agent_log.dart';
+import 'package:window_manager/window_manager.dart';
 
 // Top-level function required by compute() — must not be a closure or method.
 Future<List<NetworkInterface>> _listNetworkInterfaces(void _) =>
@@ -59,7 +60,8 @@ class _MobileControlPageContent extends StatefulWidget {
   _MobileControlPageState createState() => _MobileControlPageState();
 }
 
-class _MobileControlPageState extends State<_MobileControlPageContent> {
+class _MobileControlPageState extends State<_MobileControlPageContent>
+    with WindowListener {
   String? _connectionUrl;
   String? _nostrUri;
   String? _nostrError;
@@ -74,6 +76,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
   final Map<String, FFI> _activeSessions = {};
   final Map<String, String> _sessionStatus = {};
   bool _sidebarExpanded = true;
+  bool _isMaximized = false;
   final Set<String> _preAuthorizedPeerIds = {};
 
   /// Dedupe guard for the registration action dialog. The phone announces via
@@ -93,6 +96,12 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
   @override
   void initState() {
     super.initState();
+    windowManager.addListener(this);
+    unawaited(windowManager.isMaximized().then((value) {
+      if (mounted) {
+        setState(() => _isMaximized = value);
+      }
+    }));
     _setupEventListener();
     unawaited(_ensureDirectServerEnabled());
     _generateConnectionUrl();
@@ -149,6 +158,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
 
   @override
   void dispose() {
+    windowManager.removeListener(this);
     gFFI.serverModel.removeListener(_onServerModelChanged);
     _keepAwakeTimer?.cancel();
     _nostrWatchdog?.cancel();
@@ -164,6 +174,20 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
     }
     _activeSessions.clear();
     super.dispose();
+  }
+
+  @override
+  void onWindowMaximize() {
+    if (mounted) {
+      setState(() => _isMaximized = true);
+    }
+  }
+
+  @override
+  void onWindowUnmaximize() {
+    if (mounted) {
+      setState(() => _isMaximized = false);
+    }
   }
 
   void _onServerModelChanged() {
@@ -277,7 +301,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
       if (!mounted) return;
       _nostrWatchdog?.cancel();
       setState(() {
-        _nostrError = evt['error'] ?? 'Unknown error';
+        _nostrError = "Couldn't start the connection. Please try again.";
         _nostrLoading = false;
       });
     });
@@ -504,7 +528,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
       _nostrWatchdog?.cancel();
       setState(() {
         _nostrLoading = false;
-        _nostrError = 'Failed to start Nostr host: $e';
+        _nostrError = "Couldn't start the connection. Please try again.";
       });
       return;
     }
@@ -515,7 +539,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
       if (_nostrLoading) {
         setState(() {
           _nostrLoading = false;
-          _nostrError = 'Timed out generating offer. Tap "New Offer" to retry.';
+          _nostrError = "Couldn't connect. Check your internet and try again.";
         });
       }
     });
@@ -530,9 +554,50 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
 
   Widget _buildScaffold() {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Pair Device'),
+appBar: AppBar(
+        title: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onPanStart: (_) => windowManager.startDragging(),
+          onDoubleTap: () async {
+            if (await windowManager.isMaximized()) {
+              windowManager.unmaximize();
+            } else {
+              windowManager.maximize();
+            }
+          },
+          child: Container(
+            width: double.infinity,
+            alignment: Alignment.center,
+            child: const Text('Pair Device'),
+          ),
+        ),
+        centerTitle: true,
         backgroundColor: MyTheme.accent,
+        actions: [
+          _buildWindowActionButton(
+            icon: Icons.minimize,
+            tooltip: translate('Minimize'),
+            onPressed: () => windowManager.minimize(),
+          ),
+          _buildWindowActionButton(
+            icon: _isMaximized ? Icons.filter_none : Icons.crop_square,
+            tooltip: translate(_isMaximized ? 'Restore' : 'Maximize'),
+            onPressed: () async {
+              if (await windowManager.isMaximized()) {
+                windowManager.unmaximize();
+              } else {
+                windowManager.maximize();
+              }
+            },
+          ),
+          _buildWindowActionButton(
+            icon: Icons.close,
+            tooltip: translate('Close'),
+            destructive: true,
+            onPressed: () => windowManager.close(),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: Row(
         children: [
@@ -542,8 +607,70 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
             child: _buildSidebar(),
           ),
           VerticalDivider(width: 1, color: Colors.grey[300]),
-          Expanded(child: _buildDeviceDashboard()),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 6),
+                  child: Row(
+                    children: [
+                      loadLogo(
+                        maxWidth: 320,
+                        maxHeight: 96,
+                        margin: EdgeInsets.zero,
+                        backgroundColor: Colors.transparent,
+                        cacheWidth: 640,
+                        cacheHeight: 192,
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  height: 1,
+                  color: Theme.of(context).dividerColor.withOpacity(0.6),
+                ),
+                Expanded(child: _buildDeviceDashboard()),
+              ],
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildWindowActionButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+    bool destructive = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: onPressed,
+            child: Container(
+              width: 32,
+              height: 32,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: Colors.white.withOpacity(0.14),
+                border: Border.all(color: Colors.white.withOpacity(0.12)),
+              ),
+              child: Icon(
+                icon,
+                size: destructive ? 18 : 17,
+                color: destructive ? const Color(0xFFFF5F57) : Colors.white,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -551,10 +678,18 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
   Widget _buildSidebar() {
     if (!_sidebarExpanded) {
       return Align(
-        alignment: Alignment.topCenter,
-        child: IconButton(
-          icon: const Icon(Icons.chevron_right),
-          onPressed: () => setState(() => _sidebarExpanded = true),
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 2),
+          child: IconButton(
+            icon: const Icon(Icons.chevron_right),
+            iconSize: 24,
+            color: Colors.grey,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            tooltip: 'Expand sidebar',
+            onPressed: () => setState(() => _sidebarExpanded = true),
+          ),
         ),
       );
     }
@@ -565,11 +700,16 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
         children: [
           Row(
             children: [
+              const Text('Setup', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Spacer(),
               IconButton(
-                icon: const Icon(Icons.chevron_left),
+                icon: const Icon(Icons.close, size: 16),
+                color: Colors.grey,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                tooltip: 'Collapse sidebar',
                 onPressed: () => setState(() => _sidebarExpanded = false),
               ),
-              const Text('Setup', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ],
           ),
           _buildConnectionCard(),
@@ -624,16 +764,15 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
   }
 
   Future<void> _onNostrConnectRemote(String deviceId) async {
-    showToast('Looking up device $deviceId on Nostr...');
+    showToast('Looking up your device...');
     final result = await lookupDeviceById(deviceId);
     if (result == null) {
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Device Not Found'),
-          content: Text(
-            'Device "$deviceId" was not found on Nostr relays.\n\n'
-            'Make sure the target device has the Nostr tab open.',
+          title: const Text("Couldn't Connect"),
+          content: const Text(
+            "We couldn't find your device. Make sure it's online and try again.",
           ),
           actions: [
             TextButton(
@@ -677,7 +816,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
     final encodedOffer = base64Encode(utf8.encode(result.offer));
     final uri =
         'nostr-webrtc://${result.deviceId}?offer=$encodedOffer#${result.pubkey}';
-    showToast('Connecting via Nostr WebRTC...');
+    showToast('Connecting...');
     await anuvadiniWinManager.newRemoteDesktop(
       uri,
       password: password.isNotEmpty ? password : null,
@@ -878,19 +1017,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
               if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
               
               if (_connectionUrl != null) ...[
-                QrImageView(
-                  data: _connectionUrl!,
-                  version: QrVersions.auto,
-                  size: 200,
-                  backgroundColor: Colors.white,
-                  errorCorrectionLevel: QrErrorCorrectLevel.H,
-                  eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
-                  dataModuleStyle: QrDataModuleStyle(color: Colors.black, dataModuleShape: QrDataModuleShape.square),
-                  embeddedImage: const AssetImage('assets/logo.png'),
-                  embeddedImageStyle: const QrEmbeddedImageStyle(
-                    size: Size(44, 44),
-                  ),
-                ),
+                _qrWithLogo(_connectionUrl!, size: 200),
                 const SizedBox(height: 4),
                 Text('Same Wi-Fi required', style: TextStyle(fontSize: 10, color: Colors.grey[600])),
                 if (!_serverReady)
@@ -956,23 +1083,11 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
                 ),
               ],
               if (_nostrUri != null) ...[
-                QrImageView(
-                  data: _nostrUri!,
-                  version: QrVersions.auto,
-                  size: 150,
-                  backgroundColor: Colors.white,
-                  errorCorrectionLevel: QrErrorCorrectLevel.H,
-                  eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
-                  dataModuleStyle: QrDataModuleStyle(color: Colors.black, dataModuleShape: QrDataModuleShape.square),
-                  embeddedImage: const AssetImage('assets/logo.png'),
-                  embeddedImageStyle: const QrEmbeddedImageStyle(
-                    size: Size(36, 36),
-                  ),
-                ),
+                _qrWithLogo(_nostrUri!, size: 150),
                 const SizedBox(height: 4),
                 Text('Works over 5G / internet', style: TextStyle(fontSize: 10, color: Colors.deepPurple[400])),
                 Text(
-                  'Wait ~10 s after opening, then scan. Phone fetches offer via Nostr.',
+                  'Wait a moment after opening, then scan with your phone.',
                   style: TextStyle(fontSize: 9, color: Colors.grey[500]),
                   textAlign: TextAlign.center,
                 ),
@@ -1038,6 +1153,37 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
         ),
       ),
     );
+}
+
+  Widget _qrWithLogo(String data, {required double size}) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        QrImageView(
+          data: data,
+          version: QrVersions.auto,
+          size: size,
+          backgroundColor: Colors.white,
+          errorCorrectionLevel: QrErrorCorrectLevel.H,
+          eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
+          dataModuleStyle: QrDataModuleStyle(
+              color: Colors.black, dataModuleShape: QrDataModuleShape.square),
+        ),
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Image(
+            image: const AssetImage('assets/logo.png'),
+            width: size * 0.26,
+            height: size * 0.26,
+            fit: BoxFit.contain,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildDeviceDashboard() {
@@ -1096,9 +1242,19 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Mobile Streams Dashboard',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Devices',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 3),
+                  Text(
+                    'All your connected devices',
+                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                  ),
+                ],
               ),
               Chip(
                 label: Text('${_activeSessions.length} Live'),
@@ -1290,7 +1446,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
       ffi.invokeMethod("enable_soft_keyboard", true);
       showToast('Opening keyboard...');
     } catch (e) {
-      showToast('Keyboard: $e');
+      showToast("Couldn't open the keyboard.");
     }
   }
 
@@ -1314,7 +1470,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
           .changeCurrentKey(MessageKey(ffi.id, ChatModel.clientModeID));
       ffi.chatModel.toggleChatOverlay();
     } catch (e) {
-      showToast('Chat: $e');
+      showToast("Couldn't open chat.");
     }
   }
 
@@ -1323,7 +1479,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
       final menus = toolbarControls(context, ffi.id, ffi);
       _showInlineMenu(ffi, menus);
     } catch (e) {
-      showToast('Options: $e');
+      showToast("Couldn't open options.");
     }
   }
 
@@ -1333,7 +1489,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
       final menus = toolbarControls(context, ffi.id, ffi);
       _showInlineMenu(ffi, [...mobileMenus, ...menus]);
     } catch (e) {
-      showToast('More: $e');
+      showToast("Couldn't open the menu.");
     }
   }
 
@@ -1557,14 +1713,13 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
       _imageTimeout?.cancel();
       _imageTimeout = Timer(const Duration(seconds: 30), () {
         if (!mounted || _sessionStatus[key] == 'Connected') return;
-        final pi = ffi.ffiModel.pi.isSet.value;
-        showToast('No video from $ip after 30s (pi.isSet=$pi). '
-            'Check phone screen-capture permission & restart the phone app.');
+        showToast("Not receiving video. Make sure the phone is sharing "
+            'its screen and try again.');
       });
     } catch (e) {
       _imageTimeout?.cancel();
       setState(() => _sessionStatus[key] = 'Error');
-      showToast('Failed to connect $ip: $e');
+      showToast("Couldn't connect. Please try again.");
     }
   }
 
@@ -1637,7 +1792,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
         showToast('Phone $id will be authorized when it connects.');
       }
     } catch (e) {
-      showToast('Authorize error: $e');
+      showToast("Couldn't authorize the device. Please try again.");
     }
     // Ask the phone to connect back and control this laptop over LAN
     // (direct TCP — no Nostr, no relay). The laptop's temp password lets
@@ -1682,7 +1837,7 @@ class _MobileControlPageState extends State<_MobileControlPageContent> {
         showToast('Phone did not acknowledge the control request.');
       }
     } catch (e) {
-      showToast('Failed to notify phone: $e');
+      showToast("Couldn't notify the phone. Please try again.");
     }
   }
 
@@ -2216,16 +2371,6 @@ class _StreamOverlayWithActionsState
               tooltip: 'Disconnect',
               accent: Colors.redAccent,
               onPressed: connected ? widget.onDisconnect : null,
-            ),
-            _btn(
-              icon: Icons.tune_rounded,
-              tooltip: 'Options',
-              onPressed: connected ? widget.onOptions : null,
-            ),
-            _btn(
-              icon: Icons.touch_app_rounded,
-              tooltip: 'Touch / Mouse',
-              onPressed: connected ? widget.onTouchMode : null,
             ),
             _btn(
               icon: Icons.more_horiz_rounded,

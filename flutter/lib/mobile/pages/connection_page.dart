@@ -638,7 +638,7 @@ class _MyQrDialogState extends State<_MyQrDialog> {
       });
     } catch (e) {
       setState(() {
-        _lanError = e.toString();
+        _lanError = "Couldn't set up your local network. Please try again.";
         _lanLoading = false;
       });
     }
@@ -690,7 +690,7 @@ class _MyQrDialogState extends State<_MyQrDialog> {
           'on_nostr_webrtc_error', '_my_qr_dialog_err');
       if (mounted) {
         setState(() {
-          _nostrError = 'Failed to start: $e';
+          _nostrError = "Couldn't start the connection. Please try again.";
           _nostrLoading = false;
         });
       }
@@ -710,7 +710,7 @@ class _MyQrDialogState extends State<_MyQrDialog> {
     if (mounted) {
       setState(() {
         if (uri == null || uri.isEmpty) {
-          _nostrError = 'Timed out generating offer. Try again.';
+          _nostrError = "Couldn't connect. Check your internet and try again.";
         } else {
           _nostrUri = uri;
         }
@@ -805,20 +805,7 @@ class _MyQrDialogState extends State<_MyQrDialog> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        QrImageView(
-          data: _lanUrl!,
-          version: QrVersions.auto,
-          size: 180,
-          backgroundColor: Colors.white,
-          errorCorrectionLevel: QrErrorCorrectLevel.H,
-          eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
-          dataModuleStyle: QrDataModuleStyle(
-              color: Colors.black, dataModuleShape: QrDataModuleShape.square),
-          embeddedImage: const AssetImage('assets/logo.png'),
-          embeddedImageStyle: const QrEmbeddedImageStyle(
-            size: Size(40, 40),
-          ),
-        ),
+_qrWithLogo(_lanUrl!, size: 180),
         const SizedBox(height: 8),
         const Text('Same Wi-Fi required',
             style: TextStyle(fontSize: 10, color: Colors.grey)),
@@ -826,7 +813,7 @@ class _MyQrDialogState extends State<_MyQrDialog> {
         if (!_listenerReady)
           Text(
             _listenerError != null
-                ? 'Port 21118 unavailable: $_listenerError'
+                ? 'Port busy. Close any app using it and try again.'
                 : 'Waiting for listener on port 21118…',
             style: TextStyle(
               fontSize: 10,
@@ -854,7 +841,7 @@ class _MyQrDialogState extends State<_MyQrDialog> {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 12),
-            Text('Generating Nostr offer...', style: TextStyle(fontSize: 12)),
+            Text('Setting up...', style: TextStyle(fontSize: 12)),
           ],
         ),
       );
@@ -882,20 +869,7 @@ class _MyQrDialogState extends State<_MyQrDialog> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        QrImageView(
-          data: _nostrUri!,
-          version: QrVersions.auto,
-          size: 180,
-          backgroundColor: Colors.white,
-          errorCorrectionLevel: QrErrorCorrectLevel.H,
-          eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
-          dataModuleStyle: QrDataModuleStyle(
-              color: Colors.black, dataModuleShape: QrDataModuleShape.square),
-          embeddedImage: const AssetImage('assets/logo.png'),
-          embeddedImageStyle: const QrEmbeddedImageStyle(
-            size: Size(40, 40),
-          ),
-        ),
+_qrWithLogo(_nostrUri!, size: 180),
         const SizedBox(height: 8),
         const Text('Works over 5G / internet',
             style: TextStyle(fontSize: 10, color: Colors.deepPurple)),
@@ -909,6 +883,37 @@ class _MyQrDialogState extends State<_MyQrDialog> {
         ElevatedButton(
           onPressed: _startNostrHost,
           child: const Text('New QR'),
+        ),
+      ],
+);
+  }
+
+  Widget _qrWithLogo(String data, {required double size}) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        QrImageView(
+          data: data,
+          version: QrVersions.auto,
+          size: size,
+          backgroundColor: Colors.white,
+          errorCorrectionLevel: QrErrorCorrectLevel.H,
+          eyeStyle: QrEyeStyle(color: Colors.black, eyeShape: QrEyeShape.square),
+          dataModuleStyle: QrDataModuleStyle(
+              color: Colors.black, dataModuleShape: QrDataModuleShape.square),
+        ),
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Image(
+            image: const AssetImage('assets/logo.png'),
+            width: size * 0.26,
+            height: size * 0.26,
+            fit: BoxFit.contain,
+          ),
         ),
       ],
     );

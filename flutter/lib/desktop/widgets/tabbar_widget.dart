@@ -777,7 +777,7 @@ class WindowActionPanelState extends State<WindowActionPanel> {
           return Offstage(); // Removed _TabDropDownButton to hide hamburger menu
         }),
         if (widget.tail != null) widget.tail!,
-        if (!isWindows && !kUseCompatibleUiMode)
+        if (!kUseCompatibleUiMode)
           Wrap(
             alignment: WrapAlignment.end,
             crossAxisAlignment: WrapCrossAlignment.center,

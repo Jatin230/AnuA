@@ -462,18 +462,19 @@ WindowOptions getHiddenTitleBarWindowOptions(
     bool center = false,
     bool? alwaysOnTop}) {
   var defaultTitleBarStyle = TitleBarStyle.hidden;
-  // Use native Windows title bar buttons (minimize/maximize/close).
-  if (isWindows || kUseCompatibleUiMode) {
+  // Use the native title bar only on compatibility targets, otherwise rely on
+  // the custom Flutter chrome so Windows doesn't show the extra white strip.
+  if (kUseCompatibleUiMode) {
     defaultTitleBarStyle = TitleBarStyle.normal;
   }
   return WindowOptions(
     size: size,
     center: center,
-    // Keep window buttons drawn by the OS; avoid fully transparent caption on Windows.
-    backgroundColor: isWindows ? null : (isMacOS && isMainWindow) ? null : Colors.transparent,
+    backgroundColor:
+        (isMacOS && isMainWindow) ? null : Colors.transparent,
     skipTaskbar: false,
     titleBarStyle: defaultTitleBarStyle,
-    windowButtonVisibility: true,
+    windowButtonVisibility: kUseCompatibleUiMode,
     alwaysOnTop: alwaysOnTop,
   );
 }

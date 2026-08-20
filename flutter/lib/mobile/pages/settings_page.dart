@@ -234,7 +234,11 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
           ),
         Align(
           alignment: Alignment.center,
-          child: loadLogo(),
+          child: loadLogo(
+            backgroundColor: Theme.of(context).colorScheme.background,
+            cacheWidth: 340,
+            cacheHeight: 128,
+          ),
         )
       ],
     ));

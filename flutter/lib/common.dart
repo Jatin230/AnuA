@@ -3745,32 +3745,67 @@ Widget loadPowered(BuildContext context) {
   ).marginOnly(top: 6);
 }
 
-// max 300 x 60
-Widget loadLogo() {
-  return FutureBuilder<ByteData>(
-      future: rootBundle.load('assets/logo.png'),
+// Keep the brand logo flexible so desktop pages can give it more breathing room.
+String themedLogoAssetPath(BuildContext context) {
+  return Theme.of(context).brightness == Brightness.dark
+      ? 'assets/logo_dark.png'
+      : 'assets/logo.png';
+}
+
+AssetImage themedLogoImage(BuildContext context) {
+  return AssetImage(themedLogoAssetPath(context));
+}
+
+Widget loadLogo({
+  double maxWidth = 300,
+  double maxHeight = 60,
+  EdgeInsets margin = const EdgeInsets.only(left: 12, right: 12, top: 12),
+  Color? backgroundColor,
+  int? cacheWidth,
+  int? cacheHeight,
+  String lightAsset = 'assets/logo.png',
+  String darkAsset = 'assets/logo_dark.png',
+}) {
+  return Builder(builder: (context) {
+    final assetPath = Theme.of(context).brightness == Brightness.dark
+        ? darkAsset
+        : lightAsset;
+
+    return FutureBuilder<ByteData>(
+      future: rootBundle.load(assetPath),
       builder: (BuildContext context, AsyncSnapshot<ByteData> snapshot) {
         if (snapshot.hasData) {
           final image = Image.asset(
-            'assets/logo.png',
+            assetPath,
             fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+            cacheWidth: cacheWidth,
+            cacheHeight: cacheHeight,
             errorBuilder: (ctx, error, stackTrace) {
               return Container();
             },
           );
           return Container(
-            constraints: BoxConstraints(maxWidth: 300, maxHeight: 60),
+            constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
+            color: backgroundColor ?? Colors.transparent,
             child: image,
-          ).marginOnly(left: 12, right: 12, top: 12);
+          ).paddingOnly(
+            left: margin.left,
+            top: margin.top,
+            right: margin.right,
+            bottom: margin.bottom,
+          );
         }
         return const Offstage();
       });
+  });
 }
 
 Widget loadIcon(double size) {
   return Image.asset('assets/icon.png',
       width: size,
       height: size,
+      filterQuality: FilterQuality.high,
       errorBuilder: (ctx, error, stackTrace) => SvgPicture.asset(
             'assets/icon.svg',
             width: size,

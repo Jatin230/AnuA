@@ -1993,15 +1993,10 @@ class InputModel {
   }
 
   void onMobileBack() {
-    final minBackButtonVersion = "1.3.8";
-    final peerVersion =
-        parent.target?.ffiModel.pi.version ?? minBackButtonVersion;
-    var btn = MouseButtons.back;
-    // For compatibility with old versions
-    if (versionCmp(peerVersion, minBackButtonVersion) < 0) {
-      btn = MouseButtons.right;
-    }
-    tap(btn);
+    // This fork's Android controlled device always handles the dedicated
+    // mouse back button (BACK_UP -> GLOBAL_ACTION_BACK), regardless of the
+    // reported version, so skip the old version-based right-click fallback.
+    tap(MouseButtons.back);
   }
 
   void onMobileHome() => tap(MouseButtons.wheel);

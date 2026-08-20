@@ -362,11 +362,9 @@ class _ConnectionPageState extends State<ConnectionPage>
           showDialog(
             context: context,
             builder: (ctx) => AlertDialog(
-              title: const Text('Device Not Found'),
-              content: Text(
-                'Device "$deviceId" was not found on Nostr relays.\n\n'
-                'Make sure the target device has the Nostr tab open '
-                '(start_nostr_webrtc_host running).',
+              title: const Text("Couldn't Connect"),
+              content: const Text(
+                "We couldn't find your device. Make sure it's online and try again.",
               ),
               actions: [
                 TextButton(
@@ -415,7 +413,7 @@ class _ConnectionPageState extends State<ConnectionPage>
       final encodedOffer = base64Encode(utf8.encode(result.offer));
       final uri = 'nostr-webrtc://${result.deviceId}?offer=$encodedOffer#${result.pubkey}';
 
-      showToast('Connecting via Nostr WebRTC...');
+      showToast('Connecting...');
       await anuvadiniWinManager.newRemoteDesktop(
         uri,
         password: password.isNotEmpty ? password : null,
@@ -423,7 +421,7 @@ class _ConnectionPageState extends State<ConnectionPage>
       );
     } catch (e) {
       if (mounted) {
-        showToast('Nostr connection failed: $e');
+        showToast("Couldn't connect. Please try again.");
       }
     } finally {
       if (mounted) setState(() => _nostrConnecting = false);

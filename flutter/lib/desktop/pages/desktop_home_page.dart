@@ -69,7 +69,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             buildLeftPane(context),
-            if (!isIncomingOnly) const VerticalDivider(width: 1),
+            const VerticalDivider(width: 1),
             if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
           ],
         )),
@@ -91,18 +91,102 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Widget buildLeftPane(BuildContext context) {
     final isIncomingOnly = bind.isIncomingOnly();
     final isOutgoingOnly = bind.isOutgoingOnly();
+    final disableSettings = bind.isDisableSettings();
     final children = <Widget>[
+Padding(
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onPanStart: (_) => windowManager.startDragging(),
+          onDoubleTap: () async {
+            if (await windowManager.isMaximized()) {
+              windowManager.unmaximize();
+            } else {
+              windowManager.maximize();
+            }
+          },
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: loadLogo(
+                    maxWidth: 220,
+                    maxHeight: 84,
+                    margin: EdgeInsets.zero,
+                    backgroundColor: Theme.of(context).colorScheme.background,
+                    cacheWidth: 480,
+                    cacheHeight: 184,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      Container(
+        height: 1,
+        width: double.infinity,
+        color: Theme.of(context).dividerColor.withOpacity(0.75),
+      ),
+      if (!disableSettings && !isOutgoingOnly)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              DesktopSettingPage.switch2page(SettingsTabKey.general);
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.white.withOpacity(0.08)
+                          : Colors.black.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.settings,
+                      size: 18,
+                      color: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.color
+                          ?.withOpacity(0.95),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Text(
+                    translate('Settings'),
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w500,
+                      color: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.color
+                          ?.withOpacity(0.95),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+    ];
+    children.addAll([
       if (!isOutgoingOnly) buildPresetPasswordWarning(),
       if (bind.isCustomClient())
         Align(
           alignment: Alignment.center,
           child: loadPowered(context),
         ),
-      Align(
-        alignment: Alignment.center,
-        child: loadLogo(),
-      ),
-      const SizedBox(height: 10),
       FutureBuilder<Widget>(
         future: Future.value(
             Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
@@ -122,7 +206,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         },
       ),
       buildPluginEntry(),
-    ];
+    ]);
     if (isIncomingOnly) {
       children.addAll([
         Divider(),
@@ -360,104 +444,91 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   Widget _buildWindowControls(BuildContext context) {
-    final isOutgoingOnly = bind.isOutgoingOnly();
-    final disableSettings = bind.isDisableSettings();
-    if (isWindows) {
-      return Container(
-        padding: const EdgeInsets.only(top: 6, right: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (!disableSettings && !isOutgoingOnly)
-              IconButton(
-                icon: const Icon(Icons.settings, size: 20),
-                tooltip: translate('Settings'),
-                onPressed: () {
-                  DesktopSettingPage.switch2page(SettingsTabKey.general);
-                },
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 32,
-                  minHeight: 32,
-                ),
-              ),
-          ],
-        ),
-      );
-    }
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.only(top: 8, right: 8),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Settings button (only if settings are not disabled)
-          if (!disableSettings && !isOutgoingOnly)
-            IconButton(
-              icon: const Icon(Icons.settings, size: 20),
-              tooltip: translate('Settings'),
-              onPressed: () {
-                DesktopSettingPage.switch2page(SettingsTabKey.general);
-              },
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(
-                minWidth: 32,
-                minHeight: 32,
-              ),
-            ),
-          // Minimize button
-          IconButton(
-            icon: const Icon(Icons.minimize, size: 20),
+          _buildWindowActionButton(
+            context,
+            icon: Icons.minimize,
             tooltip: translate('Minimize'),
             onPressed: () {
               windowManager.minimize();
             },
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(
-              minWidth: 32,
-              minHeight: 32,
+          ),
+          Obx(
+            () => _buildWindowActionButton(
+              context,
+              icon: stateGlobal.isMaximized.value
+                  ? Icons.filter_none
+                  : Icons.crop_square,
+              tooltip: translate(
+                  stateGlobal.isMaximized.value ? 'Restore' : 'Maximize'),
+              onPressed: () async {
+                if (await windowManager.isMaximized()) {
+                  windowManager.unmaximize();
+                } else {
+                  windowManager.maximize();
+                }
+              },
             ),
           ),
-          // Maximize/Restore button
-          Obx(() => IconButton(
-                icon: Icon(
-                  stateGlobal.isMaximized.value
-                      ? Icons.filter_none
-                      : Icons.crop_square,
-                  size: 20,
-                ),
-                tooltip: translate(
-                    stateGlobal.isMaximized.value ? 'Restore' : 'Maximize'),
-                onPressed: () async {
-                  if (await windowManager.isMaximized()) {
-                    windowManager.unmaximize();
-                  } else {
-                    windowManager.maximize();
-                  }
-                },
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(
-                  minWidth: 32,
-                  minHeight: 32,
-                ),
-              )),
-          // Close button
-          IconButton(
-            icon: const Icon(Icons.close, size: 20),
+          _buildWindowActionButton(
+            context,
+            icon: Icons.close,
             tooltip: translate('Close'),
+            destructive: true,
             onPressed: () async {
-              if (isInHomePage()) {
-                SystemNavigator.pop();
-                if (isWindows) exit(0);
-              }
+              await windowManager.close();
             },
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(
-              minWidth: 32,
-              minHeight: 32,
-            ),
-            color: Colors.redAccent,
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildWindowActionButton(
+    BuildContext context, {
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+    bool destructive = false,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 4),
+          child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: onPressed,
+            child: Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.white.withOpacity(0.045)
+                    : Colors.black.withOpacity(0.04),
+                border: Border.all(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white.withOpacity(0.07)
+                      : Colors.black.withOpacity(0.06),
+                ),
+              ),
+              child: Icon(
+                icon,
+                size: destructive ? 18 : 17,
+                color: destructive
+                    ? const Color(0xFFFF5F57)
+                    : Theme.of(context).iconTheme.color?.withOpacity(0.92),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -466,64 +537,71 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final model = gFFI.serverModel;
     return Container(
       margin: const EdgeInsets.only(left: 20, right: 11),
-      height: 57,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
+      height: 74,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 2,
+            height: 2,
+            width: 72,
             decoration: const BoxDecoration(color: MyTheme.accent),
-          ).marginOnly(top: 5),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(left: 7),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    height: 35,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Text(
-                          translate("Device ID"),
-                          style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Theme.of(context)
-                                  .textTheme
-                                  .titleLarge
-                                  ?.color
-                                  ?.withOpacity(0.8)),
-                        ).marginOnly(top: 5),
-                      ],
-                    ),
+          ).marginOnly(top: 5, bottom: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 7),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: 35,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Text(
+                              translate("Device ID"),
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  color: Theme.of(context)
+                                      .textTheme
+                                      .titleLarge
+                                      ?.color
+                                      ?.withOpacity(0.8)),
+                            ).marginOnly(top: 5),
+                          ],
+                        ),
+                      ),
+                      Flexible(
+                        child: GestureDetector(
+                          onDoubleTap: () {
+                            Clipboard.setData(
+                                ClipboardData(text: model.serverId.text));
+                            showToast(translate("Copied"));
+                          },
+                          child: TextFormField(
+                            controller: model.serverId,
+                            readOnly: true,
+                            decoration: InputDecoration(
+                              border: InputBorder.none,
+                              contentPadding:
+                                  EdgeInsets.only(top: 10, bottom: 10),
+                            ),
+                            style: TextStyle(
+                              fontSize: 22,
+                            ),
+                          ).workaroundFreezeLinuxMint(),
+                        ),
+                      )
+                    ],
                   ),
-                  Flexible(
-                    child: GestureDetector(
-                      onDoubleTap: () {
-                        Clipboard.setData(
-                            ClipboardData(text: model.serverId.text));
-                        showToast(translate("Copied"));
-                      },
-                      child: TextFormField(
-                        controller: model.serverId,
-                        readOnly: true,
-                        decoration: InputDecoration(
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.only(top: 10, bottom: 10),
-                        ),
-                        style: TextStyle(
-                          fontSize: 22,
-                        ),
-                      ).workaroundFreezeLinuxMint(),
-                    ),
-                  )
-                ],
+                ),
               ),
-            ),
+            ],
           ),
         ],
       ),
